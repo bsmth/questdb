@@ -27,11 +27,22 @@
 #include <shlwapi.h>
 #include <minwindef.h>
 #include <fileapi.h>
-
 #include <winbase.h>
 #include <direct.h>
+#include <stdint.h>
 #include "../share/files.h"
 #include "errno.h"
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
+        (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
+    const char *from = (const char *) lpszFrom;
+    const char *to = (const char *) lpszTo;
+    if (CopyFile(from, to, TRUE) == FALSE) {
+        SaveLastError();
+        return -1;
+    }
+    return 1;
+}
 
 int set_file_pos(HANDLE fd, jlong offset) {
     if (offset < 0) {
@@ -145,6 +156,13 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_msync(JNIEnv *e, jclass cl, jlo
         return -1;
     }
     return 0;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jlong fd) {
+    // Windows does not seem to have fsync or cannot fsync directory.
+    // To be fair we never saw our destructive test fail on windows,
+    // which leads to an assumption that all directory changes on windows are synchronous.
+    return -1;
 }
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_setLastModified
@@ -318,7 +336,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
-        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags) {
+        (JNIEnv *e, jclass cl, jlong fd, jlong len, jlong offset, jint flags, jlong baseAddress) {
     jlong maxsize = offset + len;
     DWORD flProtect;
     DWORD dwDesiredAccess;
@@ -339,7 +357,13 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
         return -1;
     }
 
-    address = MapViewOfFile(hMapping, dwDesiredAccess, (DWORD) (offset >> 32), (DWORD) offset, (SIZE_T) len);
+    address = MapViewOfFileEx(
+            hMapping, dwDesiredAccess,
+            (DWORD) (offset >> 32),
+            (DWORD) offset,
+            (SIZE_T) len,
+            (LPVOID) baseAddress
+    );
 
     SaveLastError();
 
@@ -360,12 +384,12 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 
 inline jlong _io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
-    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags);
+    jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags, 0);
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return newAddress;
 }
-    
+
 JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
         (jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
@@ -374,7 +398,7 @@ JNIEXPORT jlong JNICALL JavaCritical_io_questdb_std_Files_mremap0
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
         (JNIEnv *e, jclass cl, jlong fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
-}       
+}
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getPageSize
         (JNIEnv *e, jclass cl) {
@@ -415,7 +439,7 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
     return FALSE;
 }
 
-#define UTF8_MAX_PATH MAX_PATH * 4
+#define UTF8_MAX_PATH (MAX_PATH * 4)
 
 typedef struct {
     WIN32_FIND_DATAW *find_data;
@@ -429,7 +453,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findFirst
     char path[strlen((const char *) lpszName) + 32];
     sprintf(path, "%s\\*.*", (char *) lpszName);
 
-    size_t len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    int len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf[len];
         MultiByteToWideChar(CP_UTF8, 0, path, -1, buf, len);

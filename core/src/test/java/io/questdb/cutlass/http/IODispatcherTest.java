@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.NetUtils;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.QueryCache;
@@ -45,6 +44,8 @@ import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.ByteSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -55,10 +56,12 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -67,10 +70,7 @@ public class IODispatcherTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final RescheduleContext EmptyRescheduleContext = (retry) -> {
     };
-
-    @Rule
-    public TemporaryFolder temp = new TemporaryFolder();
-    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter();
     private final String ValidImportResponse = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -86,15 +86,18 @@ public class IODispatcherTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                                DispatchingBaseNum  |                   STRING  |           0  |\r\n" +
-            "|              1  |                                    PickupDateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                   DropOffDatetime  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
             "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
             "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
+    private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
 
     public static void createTestTable(CairoConfiguration configuration, int n) {
         try (TableModel model = new TableModel(configuration, "y", PartitionBy.NONE)) {
@@ -198,6 +201,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -209,7 +213,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
             }
         });
@@ -229,7 +235,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -292,6 +298,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -303,7 +310,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -896,6 +905,101 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testImportEpochTimestamp() throws Exception {
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(temp)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(NetworkFacadeImpl.INSTANCE)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .run((engine) -> {
+                            SqlExecutionContextImpl executionContext = new SqlExecutionContextImpl(engine, 1);
+                            try (SqlCompiler compiler = new SqlCompiler(engine)) {
+                                compiler.compile("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
+
+                                sendAndReceive(
+                                        NetworkFacadeImpl.INSTANCE,
+                                        "POST /upload?name=test HTTP/1.1\r\n" +
+                                                "Host: localhost:9000\r\n" +
+                                                "User-Agent: curl/7.71.1\r\n" +
+                                                "Accept: */*\r\n" +
+                                                "Content-Length: 372\r\n" +
+                                                "Content-Type: multipart/form-data; boundary=----WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV\r\n" +
+                                                "Content-Disposition: form-data; name=\"data\"\r\n" +
+                                                "\r\n" +
+                                                "100000000,1000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "100000001,2000\r\n" +
+                                                "\r\n" +
+                                                "------WebKitFormBoundaryOsOAD9cPKyHuxyBV--",
+                                        "HTTP/1.1 200 OK\r\n" +
+                                                "Server: questDB/1.0\r\n" +
+                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                                "Transfer-Encoding: chunked\r\n" +
+                                                "Content-Type: text/plain; charset=utf-8\r\n" +
+                                                "\r\n" +
+                                                "0507\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|      Location:  |                                              test  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                                "|   Partition by  |                                               DAY  |                 |         |              |\r\n" +
+                                                "|      Timestamp  |                                                ts  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|   Rows handled  |                                                11  |                 |         |              |\r\n" +
+                                                "|  Rows imported  |                                                11  |                 |         |              |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "|              0  |                                                ts  |                TIMESTAMP  |           0  |\r\n" +
+                                                "|              1  |                                             value  |                      INT  |           0  |\r\n" +
+                                                "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                                "\r\n" +
+                                                "00\r\n" +
+                                                "\r\n",
+                                        1,
+                                        0,
+                                        false,
+                                        true
+                                );
+
+                                StringSink sink = new StringSink();
+                                TestUtils.assertSql(
+                                        compiler,
+                                        executionContext,
+                                        "test",
+                                        sink,
+                                        "ts\tvalue\n" +
+                                                "1970-01-01T00:01:40.000000Z\t1000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n" +
+                                                "1970-01-01T00:01:40.000001Z\t2000\n"
+                                );
+                            }
+                        }
+                );
+    }
+
+    @Test
     public void testImportForceUnknownDate() throws Exception {
         testImport(
                 "HTTP/1.1 200 OK\r\n" +
@@ -1084,7 +1188,7 @@ public class IODispatcherTest {
                         "--------------------------27d997ca93d2689d--"
                 , NetworkFacadeImpl.INSTANCE
                 , false
-                , 1 // todo: we need to fix writer queuing and increase request count
+                , 5
         );
     }
 
@@ -1155,7 +1259,7 @@ public class IODispatcherTest {
                     }
                 },
                 false,
-                1 // todo: fix writer queue and increase request count
+                10
         );
     }
 
@@ -1163,7 +1267,7 @@ public class IODispatcherTest {
     public void testImportMultipleOnSameConnectionSlow() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -1264,8 +1368,6 @@ public class IODispatcherTest {
                         "\r\n" +
                         "--------------------------27d997ca93d2689d--";
 
-                String expectedResponse = ValidImportResponse;
-
 
                 NetworkFacade nf = new NetworkFacadeImpl() {
                     int totalSent = 0;
@@ -1292,7 +1394,7 @@ public class IODispatcherTest {
                     sendAndReceive(
                             nf,
                             request,
-                            expectedResponse,
+                            ValidImportResponse,
                             3,
                             0,
                             false
@@ -1313,8 +1415,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0503\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpepPickupDatetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"LpepDropoffDatetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"StoreAndFwdFlag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"PickupLongitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"PickupLatitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"DropoffLongitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"DropoffLatitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"PassengerCount\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"TripDistance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"FareAmount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTATax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"TipAmount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"TollsAmount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"EhailFee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TotalAmount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"PaymentType\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"TripType\",\"type\":\"INT\",\"size\":4,\"errors\":0}]}\r\n" +
+                        "0518\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -1414,8 +1516,8 @@ public class IODispatcherTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0519\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpepPickupDatetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"LpepDropoffDatetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"StoreAndFwdFlag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"PickupLongitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"PickupLatitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"DropoffLongitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"DropoffLatitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"PassengerCount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TripDistance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"FareAmount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTATax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TipAmount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TollsAmount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"EhailFee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TotalAmount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"PaymentType\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"TripType\",\"type\":\"STRING\",\"size\":0,\"errors\":0}]}\r\n" +
+                        "052e\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&skipLev=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -1512,7 +1614,7 @@ public class IODispatcherTest {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -1590,85 +1692,61 @@ public class IODispatcherTest {
                             "Transfer-Encoding: chunked\r\n" +
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
-                            "\r\n" +
-                            "68\r\n" +
-                            "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"}\r\n" +
-                            "72\r\n" +
-                            ",{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"}\r\n" +
-                            "75\r\n" +
-                            ",{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"}\r\n" +
-                            "73\r\n" +
-                            ",{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\"\r\n" +
-                            "70\r\n" +
-                            ",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null\r\n" +
-                            "6d\r\n" +
-                            ",\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001\r\n" +
-                            "7f\r\n" +
-                            ",7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\",null,0.05384400312338511,\"HVUVS\",\"OTS\",true\r\n" +
-                            "80\r\n" +
-                            ",[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[\r\n" +
-                            "74\r\n" +
-                            "-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\",\"186548-11-05T05:57:55.827139Z\",0.89989215\r\n" +
-                            "80\r\n" +
-                            ",0.6583311519893554,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598\r\n" +
-                            "75\r\n" +
-                            ",-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[-97,-11913,null,750145151786158348\r\n" +
-                            "80\r\n" +
-                            ",\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",false,[]],[58,7132\r\n" +
-                            "7e\r\n" +
-                            ",null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null,0.7215959171612961,\"KWZLU\",\"GXH\"\r\n" +
-                            "72\r\n" +
-                            ",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null\r\n" +
-                            "63\r\n" +
-                            ",0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\"\r\n" +
-                            "6d\r\n" +
-                            ",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757\r\n" +
-                            "7a\r\n" +
-                            ",4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",false,[]],[17,23522\r\n" +
-                            "7e\r\n" +
-                            ",-861621212,-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.11296257318851766,\"CGFNW\",null,true,[]],[-104\r\n" +
-                            "6d\r\n" +
-                            ",12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null\r\n" +
-                            "73\r\n" +
-                            ",0.5764439692141042,\"BQQEM\",null,false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187\r\n" +
-                            "73\r\n" +
-                            ",0.5900836401674938,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\"\r\n" +
-                            "73\r\n" +
-                            ",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484\r\n" +
-                            "78\r\n" +
-                            ",\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960\r\n" +
-                            "7b\r\n" +
-                            ",-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515,0.533524384058538,\"VOCUG\",\"UNE\",false,[]],[56,-17784\r\n" +
-                            "69\r\n" +
-                            ",null,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",true,[]],[58,29019,-416467698,null\r\n" +
-                            "7b\r\n" +
-                            ",\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101994511517,\"DXCBJ\",null,true,[]],[-11,-23214\r\n" +
-                            "80\r\n" +
-                            ",1210163254,-7888017038009650608,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]\r\n" +
-                            "7d\r\n" +
-                            "],[-69,-29912,217564476,null,\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\",0.08039439,0.18684267640195917\r\n" +
-                            "61\r\n" +
-                            ",\"EUKWM\",\"NZZ\",true,[]],[4,19590,-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\"\r\n" +
-                            "6d\r\n" +
-                            ",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.22122747948030208,\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453\r\n" +
-                            "80\r\n" +
-                            ",8456443351018554474,\"197601854-07-22T06:29:36.718Z\",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505998532723,\"YQPZG\",\"ZNY\"\r\n" +
-                            "80\r\n" +
-                            ",true,[]],[106,32411,-1426419269,-2990992799558673548,\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.02633639777833019,\"GENFE\"\r\n" +
-                            "7f\r\n" +
-                            ",\"WWR\",false,[]],[-125,25715,null,null,\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088087840823,\"IJZZY\",null,true,[]]\r\n" +
-                            "75\r\n" +
-                            ",[96,-13602,1350628163,null,\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null\r\n" +
-                            "80\r\n" +
-                            ",-5695137753964242205,\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76\r\n" +
-                            "7d\r\n" +
-                            ",12479,null,-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\"\r\n" +
-                            "76\r\n" +
-                            ",true,[]],[100,24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\"\r\n" +
-                            "44\r\n" +
-                            ",0.20179749,0.42934437054513563,\"USIMY\",\"XUU\",false,[]]],\"count\":31}\r\n" +
-                            "00\r\n" +
-                            "\r\n";
+                            "\r\n" + "f7\r\n" +
+                            "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"}\r\n"
+                            +
+                            "fd\r\n" +
+                            ",{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\"\r\n"
+                            +
+                            "fe\r\n" +
+                            ",\"ZSX\",false,[]],[30,32312,-303295973,6854658259142399220,null,\"273652-10-24T01:16:04.499209Z\",0.38179755,0.9687423276940171,\"EDRQQ\",\"LOF\",false,[]],[-79,-21442,1985398001,7522482991756933150,\"279864478-12-31T01:58:35.932Z\",\"20093-07-24T16:56:53.198086Z\"\r\n"
+                            +
+                            "f5\r\n" +
+                            ",null,0.05384400312338511,\"HVUVS\",\"OTS\",true,[]],[70,-29572,-1966408995,-2406077911451945242,null,\"-254163-09-17T05:33:54.251307Z\",0.81233966,null,\"IKJSM\",\"SUQ\",false,[]],[-97,15913,2011884585,4641238585508069993,\"-277437004-09-03T08:55:41.803Z\"\r\n"
+                            +
+                            "fe\r\n" +
+                            ",\"186548-11-05T05:57:55.827139Z\",0.89989215,0.6583311519893554,\"ZIMNZ\",\"RMF\",false,[]],[-9,5991,-907794648,null,null,null,0.13264287,null,\"OHNZH\",null,false,[]],[-94,30598,-1510166985,6056145309392106540,null,null,0.54669005,null,\"MZVQE\",\"NDC\",true,[]],[\r\n"
+                            +
+                            "ff\r\n" +
+                            "-97,-11913,null,750145151786158348,\"-144112168-08-02T20:50:38.542Z\",\"-279681-08-19T06:26:33.186955Z\",0.8977236,0.5691053034055052,\"WIFFL\",\"BRO\",false,[]],[58,7132,null,6793615437970356479,\"63572238-04-24T11:00:13.287Z\",\"171291-08-24T10:16:32.229138Z\",null\r\n"
+                            +
+                            "f6\r\n" +
+                            ",0.7215959171612961,\"KWZLU\",\"GXH\",false,[]],[37,7618,null,-9219078548506735248,\"286623354-12-11T19:15:45.735Z\",\"197633-02-20T09:12:49.579955Z\",null,0.8001632261203552,null,\"KFM\",false,[]],[109,-8207,-485549586,null,\"278802275-11-05T23:22:18.593Z\"\r\n"
+                            +
+                            "f2\r\n" +
+                            ",\"122137-10-05T20:22:21.831563Z\",0.5780819,0.18586435581637295,\"DYOPH\",\"IMY\",false,[]],[-44,21057,-1604266757,4598876523645326656,null,\"204480-04-27T20:21:01.380246Z\",0.19736767,0.11591855759299885,\"DMIGQ\",\"VKH\",false,[]],[17,23522,-861621212\r\n"
+                            +
+                            "0100\r\n" +
+                            ",-6446120489339099836,null,\"79287-08-03T02:05:46.962686Z\",0.4349324,0.11296257318851766,\"CGFNW\",null,true,[]],[-104,12160,1772084256,-5828188148408093893,\"-270365729-01-24T04:33:47.165Z\",\"-252298-10-09T07:11:36.011048Z\",null,0.5764439692141042,\"BQQEM\",null\r\n"
+                            +
+                            "fd\r\n" +
+                            ",false,[]],[-99,-7837,-159178348,null,\"81404961-06-19T18:10:11.037Z\",null,0.5598187,0.5900836401674938,null,\"HPZ\",true,[]],[-127,5343,-238129044,-8851773155849999621,\"-152632412-11-30T22:15:09.334Z\",\"-90192-03-24T17:45:15.784841Z\",0.7806183,null,\"CLNXF\"\r\n"
+                            +
+                            "fa\r\n" +
+                            ",\"UWP\",false,[]],[-59,-10912,1665107665,-8306574409611146484,\"-243146933-02-10T16:15:15.931Z\",\"-109765-04-18T07:45:05.739795Z\",0.52387,null,\"NIJEE\",\"RUG\",true,[]],[69,4771,21764960,-5708280760166173503,null,\"-248236-04-27T14:06:03.509521Z\",0.77833515\r\n"
+                            +
+                            "ff\r\n" +
+                            ",0.533524384058538,\"VOCUG\",\"UNE\",false,[]],[56,-17784,null,5637967617527425113,null,null,null,0.5815065874358148,null,\"EVQ\",true,[]],[58,29019,-416467698,null,\"-175203601-12-02T01:02:02.378Z\",\"201101-10-20T07:35:25.133598Z\",null,0.7430101994511517,\"DXCBJ\"\r\n"
+                            +
+                            "f8\r\n" +
+                            ",null,true,[]],[-11,-23214,1210163254,-7888017038009650608,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[]],[-69,-29912,217564476,null,\"-102483035-11-11T09:07:30.782Z\",\"-196714-09-04T03:57:56.227221Z\"\r\n"
+                            +
+                            "ed\r\n" +
+                            ",0.08039439,0.18684267640195917,\"EUKWM\",\"NZZ\",true,[]],[4,19590,-1505690678,6904166490726350488,\"-218006330-04-21T14:18:39.081Z\",\"283032-05-21T12:20:14.632027Z\",0.23285526,0.22122747948030208,\"NSSTC\",\"ZUP\",false,[]],[-111,-6531,342159453\r\n"
+                            +
+                            "0100\r\n" +
+                            ",8456443351018554474,\"197601854-07-22T06:29:36.718Z\",\"-180434-06-04T17:16:49.501207Z\",0.7910659,0.7128505998532723,\"YQPZG\",\"ZNY\",true,[]],[106,32411,-1426419269,-2990992799558673548,\"261692520-06-19T20:19:43.556Z\",null,0.8377384,0.02633639777833019,\"GENFE\"\r\n"
+                            +
+                            "f4\r\n" +
+                            ",\"WWR\",false,[]],[-125,25715,null,null,\"-113894547-06-20T07:24:13.689Z\",null,0.7417434,0.6288088087840823,\"IJZZY\",null,true,[]],[96,-13602,1350628163,null,\"257134407-03-20T11:25:44.819Z\",null,0.7360581,null,\"LGYDO\",\"NLI\",true,[]],[-64,8270,null\r\n"
+                            +
+                            "fd\r\n" +
+                            ",-5695137753964242205,\"289246073-05-28T15:10:38.644Z\",\"-220112-01-30T11:56:06.194709Z\",0.938019,null,\"GHLXG\",\"MDJ\",true,[]],[-76,12479,null,-4034810129069646757,\"123619904-08-31T19:44:11.844Z\",\"267826-03-17T13:36:32.811014Z\",0.8463546,null,\"PFOYM\",\"WDS\"\r\n"
+                            +
+                            "ba\r\n" +
+                            ",true,[]],[100,24045,-2102123220,-7175695171900374773,\"-242871073-08-17T14:45:16.399Z\",\"125517-01-13T08:03:16.581566Z\",0.20179749,0.42934437054513563,\"USIMY\",\"XUU\",false,[]]],\"count\":30}\r\n"
+                            +
+                            "00\r\n\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
@@ -2028,7 +2106,7 @@ public class IODispatcherTest {
     public void testJsonQueryDataError() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -2590,46 +2668,6 @@ public class IODispatcherTest {
                         Assert.fail(e.getMessage());
                     }
                 });
-    }
-
-    private static class QueryThread extends Thread {
-        private final String[][] requests;
-        private final int count;
-        private final CyclicBarrier barrier;
-        private final CountDownLatch latch;
-        private final AtomicInteger errorCounter;
-
-        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
-            this.requests = requests;
-            this.count = count;
-            this.barrier = barrier;
-            this.latch = latch;
-            this.errorCounter = errorCounter;
-        }
-
-        @Override
-        public void run() {
-            final Rnd rnd = new Rnd();
-            try {
-                new SendAndReceiveRequestBuilder().executeMany(requester -> {
-                    barrier.await();
-                    for (int i = 0; i < count; i++) {
-                        int index = rnd.nextPositiveInt() % requests.length;
-                        try {
-                            requester.execute(requests[index][0], requests[index][1]);
-                        } catch (Throwable e) {
-                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
-                            throw e;
-                        }
-                    }
-                });
-            } catch (Throwable e) {
-                e.printStackTrace();
-                errorCounter.incrementAndGet();
-            } finally {
-                latch.countDown();
-            }
-        }
     }
 
     @Test
@@ -3203,7 +3241,7 @@ public class IODispatcherTest {
     public void testJsonQuerySyntaxError() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -3404,12 +3442,209 @@ public class IODispatcherTest {
     }
 
     @Test
+    public void testJsonQueryWithCompressedResults1() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            30,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults1.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[20 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJsonQueryWithCompressedResults2() throws Exception {
+        Zip.init();
+        assertMemoryLeak(() -> {
+            final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
+            final String baseDir = temp.getRoot().getAbsolutePath();
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 4096, false, true);
+            final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+                @Override
+                public int[] getWorkerAffinity() {
+                    return new int[]{-1, -1};
+                }
+
+                @Override
+                public int getWorkerCount() {
+                    return 2;
+                }
+
+                @Override
+                public boolean haltOnError() {
+                    return false;
+                }
+            });
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new StaticContentProcessor(httpConfiguration);
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
+                    }
+                });
+
+                httpServer.bind(new HttpRequestProcessorFactory() {
+                    @Override
+                    public HttpRequestProcessor newInstance() {
+                        return new JsonQueryProcessor(
+                                httpConfiguration.getJsonQueryProcessorConfiguration(),
+                                engine,
+                                null,
+                                workerPool.getWorkerCount());
+                    }
+
+                    @Override
+                    public String getUrl() {
+                        return "/query";
+                    }
+                });
+
+                workerPool.start(LOG);
+
+                try {
+                    // create table with all column types
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            1000,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence());
+
+                    // send multipart request to server
+                    final String request = "GET /query?query=x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+
+                    ByteArrayResponse expectedResponse;
+                    try (InputStream is = getClass().getResourceAsStream(getClass().getSimpleName() + ".testJsonQueryWithCompressedResults2.bin")) {
+                        Assert.assertNotNull(is);
+                        byte[] bytes = new byte[100 * 1024];
+                        int len = is.read(bytes);
+                        expectedResponse = new ByteArrayResponse(bytes, len);
+                    }
+                    sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
+                } finally {
+                    workerPool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJsonQueryWithInterruption() throws Exception {
         assertMemoryLeak(() -> {
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 128,
-                    false, false);
+            final int tableRowCount = 300_000;
+
+            SOCountDownLatch peerDisconnectLatch = new SOCountDownLatch(1);
+
+            DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                    .withNetwork(nf)
+                    .withBaseDir(baseDir)
+                    .withSendBufferSize(256)
+                    .withDumpingTraffic(false)
+                    .withAllowDeflateBeforeSend(false)
+                    .withServerKeepAlive(true)
+                    .withHttpProtocolVersion("HTTP/1.1 ")
+                    .withOnPeerDisconnect(peerDisconnectLatch::countDown)
+                    .build();
+            QueryCache.configure(httpConfiguration);
+
+
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -3426,8 +3661,11 @@ public class IODispatcherTest {
                     return false;
                 }
             });
-            try (CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
-                 HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)) {
+
+            try (
+                    CairoEngine engine = new CairoEngine(new DefaultCairoConfiguration(baseDir));
+                    HttpServer httpServer = new HttpServer(httpConfiguration, workerPool, false)
+            ) {
                 httpServer.bind(new HttpRequestProcessorFactory() {
                     @Override
                     public HttpRequestProcessor newInstance() {
@@ -3454,28 +3692,41 @@ public class IODispatcherTest {
                 });
 
                 final AtomicBoolean clientClosed = new AtomicBoolean(false);
-                final AtomicBoolean serverClosed = new AtomicBoolean(false);
+                final int minClientReceivedBytesBeforeDisconnect = 180;
+                final AtomicLong refClientFd = new AtomicLong(-1);
                 HttpClientStateListener clientStateListener = new HttpClientStateListener() {
+                    private int nBytesReceived = 0;
+
                     @Override
                     public void onClosed() {
-                        clientClosed.set(true);
-
                     }
 
                     @Override
                     public void onReceived(int nBytes) {
                         LOG.info().$("Client received ").$(nBytes).$(" bytes").$();
+                        nBytesReceived += nBytes;
+                        if (nBytesReceived >= minClientReceivedBytesBeforeDisconnect) {
+                            long fd = refClientFd.get();
+                            if (fd != -1) {
+                                refClientFd.set(-1);
+                                nf.close(fd);
+                                clientClosed.set(true);
+                            }
+                        }
                     }
                 };
                 workerPool.start(LOG);
 
                 try {
                     // create table with all column types
-                    CairoTestUtils.createTestTable(engine.getConfiguration(), 10000, new Rnd(),
-                            new TestRecord.ArrayBinarySequence());
+                    CairoTestUtils.createTestTable(
+                            engine.getConfiguration(),
+                            tableRowCount,
+                            new Rnd(),
+                            new TestRecord.ArrayBinarySequence()
+                    );
 
                     // send multipart request to server
-
                     final String request = "GET /query?query=select+distinct+a+from+x+where+test_latched_counter() HTTP/1.1\r\n"
                             + "Host: localhost:9001\r\n" + "Connection: keep-alive\r\n" + "Cache-Control: max-age=0\r\n"
                             + "Upgrade-Insecure-Requests: 1\r\n"
@@ -3484,26 +3735,6 @@ public class IODispatcherTest {
                             + "Accept-Encoding: gzip, deflate, br\r\n"
                             + "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" + "\r\n";
 
-                    String expectedResponse = "HTTP/1.1 200 OK\r\n" + "Server: questDB/1.0\r\n"
-                            + "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" + "Transfer-Encoding: chunked\r\n"
-                            + "Content-Type: application/json; charset=utf-8\r\n"
-                            + "Keep-Alive: timeout=5, max=10000\r\n" + "\r\n" + "7e\r\n" + "{\"query\":\"s";
-                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-                        @Override
-                        public boolean onGet(Record record, int count) {
-                            if (count == 4) {
-                                while (!clientClosed.get()) {
-                                    LockSupport.parkNanos(1);
-                                }
-                            }
-                            return true;
-                        }
-
-                        @Override
-                        public void onClose() {
-                            serverClosed.set(true);
-                        }
-                    });
                     long fd = nf.socketTcp(true);
                     try {
                         long sockAddr = nf.sockaddr("127.0.0.1", 9001);
@@ -3511,6 +3742,8 @@ public class IODispatcherTest {
                             Assert.assertTrue(fd > -1);
                             Assert.assertEquals(0, nf.connect(fd, sockAddr));
                             Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            refClientFd.set(fd);
+                            nf.configureNonBlocking(fd);
 
                             long bufLen = request.length();
                             long ptr = Unsafe.malloc(bufLen);
@@ -3520,7 +3753,7 @@ public class IODispatcherTest {
                                         .withPauseBetweenSendAndReceive(0)
                                         .withPrintOnly(false)
                                         .withExpectDisconnect(true)
-                                        .executeExplicit(request, fd, expectedResponse, 200, ptr, clientStateListener);
+                                        .executeUntilDisconnect(request, fd, 200, ptr, clientStateListener);
                             } finally {
                                 Unsafe.free(ptr, bufLen);
                             }
@@ -3528,13 +3761,12 @@ public class IODispatcherTest {
                             nf.freeSockAddr(sockAddr);
                         }
                     } finally {
-                        nf.close(fd);
-                        clientStateListener.onClosed();
+                        LOG.info().$("Closing client connection").$();
                     }
-                    while (!serverClosed.get()) {
-                        LockSupport.parkNanos(1);
-                    }
-                    Assert.assertEquals(6, TestLatchedCounterFunctionFactory.getCount());
+                    peerDisconnectLatch.await();
+                    // depending on how quick the CI hardware is we may end up processing different
+                    // number of rows before query is interrupted
+                    Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
                     workerPool.halt();
                 }
@@ -3652,7 +3884,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     configuration,
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
@@ -3948,7 +4180,7 @@ public class IODispatcherTest {
     public void testSCPConnectDownloadDisconnect() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -3986,7 +4218,7 @@ public class IODispatcherTest {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
 
-                        writeRandomFile(path, rnd, 122222212222L, diskBufferLen);
+                        writeRandomFile(path, rnd, 122222212222L);
 
 //                        httpServer.getStartedLatch().await();
 
@@ -4119,7 +4351,7 @@ public class IODispatcherTest {
     public void testSCPFullDownload() throws Exception {
         assertMemoryLeak(() -> {
             final String baseDir = temp.getRoot().getAbsolutePath();
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false, false);
+            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
             final WorkerPool workerPool = new WorkerPool(new WorkerPoolConfiguration() {
                 @Override
                 public int[] getWorkerAffinity() {
@@ -4157,7 +4389,7 @@ public class IODispatcherTest {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
 
-                        writeRandomFile(path, rnd, 122299092L, diskBufferLen);
+                        writeRandomFile(path, rnd, 122299092L);
 
                         long fd = Net.socketTcp(true);
                         try {
@@ -4306,7 +4538,6 @@ public class IODispatcherTest {
                     }
                 });
 
-                QueryCache.configure(httpConfiguration);
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
@@ -4315,7 +4546,7 @@ public class IODispatcherTest {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
 
-                        writeRandomFile(path, rnd, 122222212222L, diskBufferLen);
+                        writeRandomFile(path, rnd, 122222212222L);
 
 //                        httpServer.getStartedLatch().await();
 
@@ -4508,7 +4739,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -4597,6 +4828,7 @@ public class IODispatcherTest {
                         requestReceivedLatch.await();
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -4610,7 +4842,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -4674,7 +4908,7 @@ public class IODispatcherTest {
 
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -4782,6 +5016,7 @@ public class IODispatcherTest {
 
                         Assert.assertEquals(0, Net.close(fd));
                         LOG.info().$("closed [fd=").$(fd).$(']').$();
+                        fd = -1;
 
                         contextClosedLatch.await();
 
@@ -4795,7 +5030,9 @@ public class IODispatcherTest {
                         Net.freeSockAddr(sockAddr);
                     }
                 } finally {
-                    Net.close(fd);
+                    if (fd != -1) {
+                        Net.close(fd);
+                    }
                 }
 
                 Assert.assertEquals(1, closeCount.get());
@@ -4834,7 +5071,7 @@ public class IODispatcherTest {
                             return 500;
                         }
                     },
-                    new IOContextFactory<>() {
+                    new IOContextFactory<HttpConnectionContext>() {
                         @Override
                         public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
@@ -5062,7 +5299,8 @@ public class IODispatcherTest {
 
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final AtomicInteger requestsReceived = new AtomicInteger();
-
+            final AtomicBoolean finished = new AtomicBoolean(false);
+            final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
             try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
                     new DefaultIODispatcherConfiguration(),
                     (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration.getHttpContextConfiguration()).of(fd, dispatcher1)
@@ -5076,7 +5314,7 @@ public class IODispatcherTest {
 
                 AtomicBoolean serverRunning = new AtomicBoolean(true);
 
-                CountDownLatch serverHaltLatch = new CountDownLatch(serverThreadCount);
+                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(serverThreadCount);
                 for (int j = 0; j < serverThreadCount; j++) {
                     new Thread(() -> {
                         final StringSink sink = new StringSink();
@@ -5157,7 +5395,7 @@ public class IODispatcherTest {
                     new Thread(() -> {
                         long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                         try {
-                            for (int i = 0; i < N; i++) {
+                            for (int i = 0; i < N && !finished.get(); i++) {
                                 long fd = Net.socketTcp(true);
                                 try {
                                     Assert.assertTrue(fd > -1);
@@ -5180,6 +5418,7 @@ public class IODispatcherTest {
                         } finally {
                             completedCount.incrementAndGet();
                             Net.freeSockAddr(sockAddr);
+                            senderHalt.countDown();
                         }
                     }).start();
                 }
@@ -5203,6 +5442,9 @@ public class IODispatcherTest {
 
                 serverRunning.set(false);
                 serverHaltLatch.await();
+            } finally {
+                finished.set(true);
+                senderHalt.await();
             }
             Assert.assertEquals(N * senderCount, requestsReceived.get());
         });
@@ -5220,7 +5462,6 @@ public class IODispatcherTest {
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
-//                        System.out.print(expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining));
                         if (expectedResponseHeader.charAt(expectedHeaderLen - headerCheckRemaining) != (char) Unsafe.getUnsafe().getByte(buffer + i)) {
                             Assert.fail("at " + (expectedHeaderLen - headerCheckRemaining));
                         }
@@ -5251,74 +5492,10 @@ public class IODispatcherTest {
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
     }
 
-    private void assertColumn(CharSequence expected, int index) {
-        final String baseDir = temp.getRoot().getAbsolutePath();
-        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
-
-        try (TableReader reader = new TableReader(configuration, "telemetry")) {
-            final StringSink sink = new StringSink();
-            final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
-            TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
-            sink.clear();
-            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false);
-            TestUtils.assertEquals(expected, sink);
-        }
-    }
-
-    @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(
-            String baseDir,
-            boolean dumpTraffic,
-            boolean allowDeflateBeforeSend
-    ) {
-        return createHttpServerConfiguration(
-                NetworkFacadeImpl.INSTANCE,
-                baseDir,
-                1024 * 1024,
-                dumpTraffic,
-                allowDeflateBeforeSend
-        );
-    }
-
-    @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(
-            NetworkFacade nf,
-            String baseDir,
-            int sendBufferSize,
-            boolean dumpTraffic,
-            boolean allowDeflateBeforeSend
-    ) {
-        return createHttpServerConfiguration(nf, baseDir, sendBufferSize, dumpTraffic, allowDeflateBeforeSend, true, "HTTP/1.1 ");
-    }
-
-    @NotNull
-    private DefaultHttpServerConfiguration createHttpServerConfiguration(
-            NetworkFacade nf,
-            String baseDir,
-            int sendBufferSize,
-            boolean dumpTraffic,
-            boolean allowDeflateBeforeSend,
-            boolean serverKeepAlive,
-            String httpProtocolVersion
-    ) {
-        return new HttpServerConfigurationBuilder()
-                .withNetwork(nf)
-                .withBaseDir(baseDir)
-                .withSendBufferSize(sendBufferSize)
-                .withDumpingTraffic(dumpTraffic)
-                .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
-                .withServerKeepAlive(serverKeepAlive)
-                .withHttpProtocolVersion(httpProtocolVersion)
-                .build();
-    }
-
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
-            String response,
+            CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print
@@ -5337,7 +5514,7 @@ public class IODispatcherTest {
     private static void sendAndReceive(
             NetworkFacade nf,
             String request,
-            String response,
+            CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
             boolean print,
@@ -5350,6 +5527,78 @@ public class IODispatcherTest {
                 .withRequestCount(requestCount)
                 .withPauseBetweenSendAndReceive(pauseBetweenSendAndReceive)
                 .execute(request, response);
+    }
+
+    private void assertColumn(CharSequence expected, int index) {
+        final String baseDir = temp.getRoot().getAbsolutePath();
+        DefaultCairoConfiguration configuration = new DefaultCairoConfiguration(baseDir);
+
+        try (TableReader reader = new TableReader(configuration, "telemetry")) {
+            final StringSink sink = new StringSink();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            TestUtils.assertEquals(expected, sink);
+            reader.getCursor().toTop();
+            sink.clear();
+            printer.printFullColumn(reader.getCursor(), reader.getMetadata(), index, false, sink);
+            TestUtils.assertEquals(expected, sink);
+        }
+    }
+
+    @NotNull
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            String baseDir,
+            boolean dumpTraffic
+    ) {
+        return createHttpServerConfiguration(
+                NetworkFacadeImpl.INSTANCE,
+                baseDir,
+                1024 * 1024,
+                dumpTraffic,
+                false
+        );
+    }
+
+    @NotNull
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            NetworkFacade nf,
+            String baseDir,
+            int sendBufferSize,
+            boolean dumpTraffic,
+            boolean allowDeflateBeforeSend
+    ) {
+        return createHttpServerConfiguration(
+                nf,
+                baseDir,
+                sendBufferSize,
+                dumpTraffic,
+                allowDeflateBeforeSend,
+                true,
+                "HTTP/1.1 "
+        );
+    }
+
+    @NotNull
+    private DefaultHttpServerConfiguration createHttpServerConfiguration(
+            NetworkFacade nf,
+            String baseDir,
+            int sendBufferSize,
+            boolean dumpTraffic,
+            boolean allowDeflateBeforeSend,
+            boolean serverKeepAlive,
+            String httpProtocolVersion
+    ) {
+        DefaultHttpServerConfiguration httpConfiguration = new HttpServerConfigurationBuilder()
+                .withNetwork(nf)
+                .withBaseDir(baseDir)
+                .withSendBufferSize(sendBufferSize)
+                .withDumpingTraffic(dumpTraffic)
+                .withAllowDeflateBeforeSend(allowDeflateBeforeSend)
+                .withServerKeepAlive(serverKeepAlive)
+                .withHttpProtocolVersion(httpProtocolVersion)
+                .build();
+        QueryCache.configure(httpConfiguration);
+        return httpConfiguration;
     }
 
     private void testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
@@ -5397,24 +5646,64 @@ public class IODispatcherTest {
                 .run(code);
     }
 
-    private void writeRandomFile(Path path, Rnd rnd, long lastModified, int bufLen) {
+    private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
         if (Files.exists(path)) {
             Assert.assertTrue(Files.remove(path));
         }
         long fd = Files.openAppend(path);
 
-        long buf = Unsafe.malloc(bufLen); // 1Mb buffer
-        for (int i = 0; i < bufLen; i++) {
+        long buf = Unsafe.malloc(1048576); // 1Mb buffer
+        for (int i = 0; i < 1048576; i++) {
             Unsafe.getUnsafe().putByte(buf + i, rnd.nextByte());
         }
 
         for (int i = 0; i < 20; i++) {
-            Assert.assertEquals(bufLen, Files.append(fd, buf, bufLen));
+            Assert.assertEquals(1048576, Files.append(fd, buf, 1048576));
         }
 
         Files.close(fd);
         Files.setLastModified(path, lastModified);
-        Unsafe.free(buf, bufLen);
+        Unsafe.free(buf, 1048576);
+    }
+
+    private static class QueryThread extends Thread {
+        private final String[][] requests;
+        private final int count;
+        private final CyclicBarrier barrier;
+        private final CountDownLatch latch;
+        private final AtomicInteger errorCounter;
+
+        public QueryThread(String[][] requests, int count, CyclicBarrier barrier, CountDownLatch latch, AtomicInteger errorCounter) {
+            this.requests = requests;
+            this.count = count;
+            this.barrier = barrier;
+            this.latch = latch;
+            this.errorCounter = errorCounter;
+        }
+
+        @Override
+        public void run() {
+            final Rnd rnd = new Rnd();
+            try {
+                new SendAndReceiveRequestBuilder().executeMany(requester -> {
+                    barrier.await();
+                    for (int i = 0; i < count; i++) {
+                        int index = rnd.nextPositiveInt() % requests.length;
+                        try {
+                            requester.execute(requests[index][0], requests[index][1]);
+                        } catch (Throwable e) {
+                            System.out.println("erm: " + index + ", ts=" + Timestamps.toString(Os.currentTimeMicros()));
+                            throw e;
+                        }
+                    }
+                });
+            } catch (Throwable e) {
+                e.printStackTrace();
+                errorCounter.incrementAndGet();
+            } finally {
+                latch.countDown();
+            }
+        }
     }
 
     private static class HelloContext implements IOContext {
@@ -5453,5 +5742,37 @@ public class IODispatcherTest {
 
     static class Status {
         boolean valid;
+    }
+
+    private static class ByteArrayResponse extends AbstractCharSequence implements ByteSequence {
+        private final byte[] bytes;
+        private final int len;
+
+        private ByteArrayResponse(byte[] bytes, int len) {
+            super();
+            this.bytes = bytes;
+            this.len = len;
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return bytes[index];
+        }
+
+        @Override
+        public int length() {
+            return len;
+        }
+
+        @Override
+        public char charAt(int index) {
+            if (index >= len) {
+                throw new IndexOutOfBoundsException();
+            }
+            return (char) bytes[index];
+        }
     }
 }

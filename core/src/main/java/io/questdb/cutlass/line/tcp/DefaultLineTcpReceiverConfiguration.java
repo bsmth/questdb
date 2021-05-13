@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.WorkerPoolAwareConfiguration;
 import io.questdb.cairo.CairoSecurityContext;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cutlass.line.LineProtoNanoTimestampAdapter;
 import io.questdb.cutlass.line.LineProtoTimestampAdapter;
@@ -82,7 +83,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getWriterQueueSize() {
+    public int getWriterQueueCapacity() {
         return 64;
     }
 
@@ -97,7 +98,12 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public WorkerPoolAwareConfiguration getWorkerPoolConfiguration() {
+    public WorkerPoolAwareConfiguration getWriterWorkerPoolConfiguration() {
+        return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
+    }
+
+    @Override
+    public WorkerPoolAwareConfiguration getIOWorkerPoolConfiguration() {
         return WorkerPoolAwareConfiguration.USE_SHARED_CONFIGURATION;
     }
 
@@ -112,17 +118,27 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getMaxUncommittedRows() {
-        return 1000;
+    public long getMaintenanceInterval() {
+        return 100;
     }
 
     @Override
-    public long getMaintenanceJobHysteresisInMs() {
-        return 100;
+    public String getAuthDbPath() {
+        return null;
     }
-	
-	@Override
-	public String getAuthDbPath() {
-	    return null;
-	}
+
+    @Override
+    public int getDefaultPartitionBy() {
+        return PartitionBy.DAY;
+    }
+
+    @Override
+    public boolean isIOAggressiveRecv() {
+        return false;
+    }
+
+    @Override
+    public long getWriterIdleTimeout() {
+        return 30_000;
+    }
 }

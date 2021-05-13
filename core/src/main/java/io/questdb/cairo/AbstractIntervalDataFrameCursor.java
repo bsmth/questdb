@@ -26,13 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
-import io.questdb.std.Transient;
 
 public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
     static final int SCAN_UP = -1;
     static final int SCAN_DOWN = 1;
-    protected final LongList intervals;
+    protected final RuntimeIntrinsicIntervalModel intervalsModel;
+    protected LongList intervals;
     protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final int timestampIndex;
     protected TableReader reader;
@@ -51,9 +54,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionLo;
     private int initialPartitionHi;
 
-    public AbstractIntervalDataFrameCursor(@Transient LongList intervals, int timestampIndex) {
+    public AbstractIntervalDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         assert timestampIndex > -1;
-        this.intervals = new LongList(intervals);
+        this.intervalsModel = intervals;
         this.timestampIndex = timestampIndex;
     }
 
@@ -65,7 +68,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     @Override
     public boolean reload() {
         if (reader != null && reader.reload()) {
-            calculateRanges();
+            calculateRanges(intervals);
             return true;
         }
         return false;
@@ -98,12 +101,13 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return reader.getSymbolMapReader(columnIndex);
     }
 
-    public void of(TableReader reader) {
+    public void of(TableReader reader, SqlExecutionContext sqlContext) {
         this.reader = reader;
-        calculateRanges();
+        this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
+        calculateRanges(intervals);
     }
 
-    protected static long search(ReadOnlyColumn column, long value, long low, long high, int increment) {
+    protected static long search(ReadOnlyVirtualMemory column, long value, long low, long high, int increment) {
         while (low < high) {
             long mid = (low + high - 1) >>> 1;
             long midVal = column.getLong(mid * 8);
@@ -124,7 +128,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return -(low + 1);
     }
 
-    private void calculateRanges() {
+    private void calculateRanges(LongList intervals) {
         size = -1;
         if (intervals.size() > 0) {
             if (reader.getPartitionedBy() == PartitionBy.NONE) {
@@ -133,9 +137,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 initialPartitionLo = 0;
                 initialPartitionHi = reader.getPartitionCount();
             } else {
-                cullIntervals();
+                cullIntervals(intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
-                    cullPartitions();
+                    cullPartitions(intervals);
                 }
             }
             toTop();
@@ -156,7 +160,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
 
-                final ReadOnlyColumn column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final ReadOnlyVirtualMemory column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
@@ -226,7 +230,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return this.size = size;
     }
 
-    private void cullIntervals() {
+    private void cullIntervals(LongList intervals) {
         int intervalsLo = intervals.binarySearch(reader.getMinTimestamp());
 
         // not a direct hit
@@ -256,7 +260,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         }
     }
 
-    private void cullPartitions() {
+    private void cullPartitions(LongList intervals) {
         final long lo = intervals.getQuick(initialIntervalsLo * 2);
         long intervalLo;
         if (lo == Long.MIN_VALUE) {
@@ -264,9 +268,9 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         } else {
             intervalLo = reader.floorToPartitionTimestamp(lo);
         }
-        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalLo) : 0;
+        this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
-        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionCountBetweenTimestamps(reader.getMinTimestamp(), intervalHi) + 1);
+        this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
     protected class IntervalDataFrame implements DataFrame {
@@ -277,7 +281,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
 
         @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
-            return reader.getBitmapIndexReader(reader.getColumnBase(partitionIndex), columnIndex, direction);
+            return reader.getBitmapIndexReader(partitionIndex, reader.getColumnBase(partitionIndex), columnIndex, direction);
         }
 
         @Override

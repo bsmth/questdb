@@ -74,7 +74,7 @@ public class IntList implements Mutable {
             }
 
             int mid = (low + high - 1) >>> 1;
-            long midVal = buffer[mid];
+            int midVal = buffer[mid];
 
             if (midVal < v)
                 low = mid + 1;
@@ -139,6 +139,7 @@ public class IntList implements Mutable {
      * @return element at the specified position.
      */
     public int getQuick(int index) {
+        assert index < pos;
         return buffer[index];
     }
 
@@ -239,6 +240,7 @@ public class IntList implements Mutable {
     }
 
     public void setQuick(int index, int value) {
+        assert index < pos;
         buffer[index] = value;
     }
 
@@ -275,7 +277,7 @@ public class IntList implements Mutable {
 
     private int scanSearch(int v, int low, int high) {
         for (int i = low; i < high; i++) {
-            long f = getQuick(i);
+            int f = buffer[i];
             if (f == v) {
                 return i;
             }

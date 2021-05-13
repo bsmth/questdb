@@ -25,14 +25,17 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -42,7 +45,10 @@ public final class TableUtils {
     public static final int TABLE_RESERVED = 2;
     public static final String META_FILE_NAME = "_meta";
     public static final String TXN_FILE_NAME = "_txn";
+    public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
+    public static final String DETACHED_DIR_MARKER = ".detached";
+    public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
     public static final int INITIAL_TXN = 0;
     public static final int NULL_LEN = -1;
     public static final int ANY_TABLE_VERSION = -1;
@@ -54,15 +60,18 @@ public final class TableUtils {
     public static final long META_OFFSET_TIMESTAMP_INDEX = 8;
     public static final long META_OFFSET_VERSION = 12;
     public static final long META_OFFSET_TABLE_ID = 16;
+    public static final long META_OFFSET_O3_MAX_UNCOMMITTED_ROWS = 20;
+    public static final long META_OFFSET_O3_COMMIT_HYSTERESIS_IN_MICROS = 24;
     public static final String FILE_SUFFIX_I = ".i";
     public static final String FILE_SUFFIX_D = ".d";
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     static final DateFormat fmtDay;
     static final DateFormat fmtMonth;
     static final DateFormat fmtYear;
-    static final String ARCHIVE_FILE_NAME = "_archive";
     static final String DEFAULT_PARTITION_NAME = "default";
     // transaction file structure
     static final long TX_OFFSET_TXN = 0;
@@ -98,19 +107,20 @@ public final class TableUtils {
     static final long META_OFFSET_COLUMN_TYPES = 128;
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
-    static final String TODO_FILE_NAME = "_todo";
+    static final String TODO_FILE_NAME = "_todo_";
     private static final int MIN_SYMBOL_CAPACITY = 2;
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(1_000_000);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private final static Log LOG = LogFactory.getLog(TableUtils.class);
+    private final static DateFormat fmtDefault;
 
     private TableUtils() {
     }
 
     public static void createTable(
             FilesFacade ff,
-            AppendMemory memory,
+            AppendOnlyVirtualMemory memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -122,7 +132,7 @@ public final class TableUtils {
 
     public static void createTable(
             FilesFacade ff,
-            AppendMemory memory,
+            AppendOnlyVirtualMemory memory,
             Path path,
             @Transient CharSequence root,
             TableStructure structure,
@@ -130,22 +140,27 @@ public final class TableUtils {
             int tableVersion,
             int tableId
     ) {
+        LOG.debug().$("create table [name=").$(structure.getTableName()).$(']').$();
         path.of(root).concat(structure.getTableName());
 
-        if (ff.mkdirs(path.put(Files.SEPARATOR).$(), mkDirMode) != 0) {
+        if (ff.mkdirs(path.slash$(), mkDirMode) != 0) {
             throw CairoException.instance(ff.errno()).put("could not create [dir=").put(path).put(']');
         }
 
         final int rootLen = path.length();
 
-        try (AppendMemory mem = memory) {
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.$(), LOG) : 0;
+        try (AppendOnlyVirtualMemory mem = memory) {
             mem.of(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), ff.getPageSize());
             final int count = structure.getColumnCount();
+            path.trimTo(rootLen);
             mem.putInt(count);
             mem.putInt(structure.getPartitionBy());
             mem.putInt(structure.getTimestampIndex());
             mem.putInt(tableVersion);
             mem.putInt(tableId);
+            mem.putInt(structure.getO3MaxUncommittedRows());
+            mem.putLong(structure.getO3CommitHysteresisInMicros());
             mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
 
             for (int i = 0; i < count; i++) {
@@ -183,7 +198,20 @@ public final class TableUtils {
                 }
             }
             mem.of(ff, path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), ff.getPageSize());
-            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN);
+            TableUtils.resetTxn(mem, symbolMapCount, 0L, INITIAL_TXN, 0L);
+            resetTodoLog(ff, path, rootLen, mem);
+            // allocate txn scoreboard
+            path.trimTo(rootLen).concat(TXN_SCOREBOARD_FILE_NAME).$();
+        } finally {
+            if (dirFd > 0) {
+                if (ff.fsync(dirFd) != 0) {
+                    LOG.error()
+                            .$("could not fsync [fd=").$(dirFd)
+                            .$(", errno=").$(ff.errno())
+                            .$(']').$();
+                }
+                ff.close(dirFd);
+            }
         }
     }
 
@@ -195,7 +223,7 @@ public final class TableUtils {
         path.of(root).concat(name, lo, hi).$();
         if (ff.exists(path)) {
             // prepare to replace trailing \0
-            if (ff.exists(path.chopZ().concat(TXN_FILE_NAME).$())) {
+            if (ff.exists(path.chop$().concat(TXN_FILE_NAME).$())) {
                 return TABLE_EXISTS;
             } else {
                 return TABLE_RESERVED;
@@ -209,12 +237,29 @@ public final class TableUtils {
         return META_OFFSET_COLUMN_TYPES + columnCount * META_COLUMN_DATA_SIZE;
     }
 
-    public static int getColumnType(ReadOnlyColumn metaMem, int columnIndex) {
+    public static int getColumnType(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return metaMem.getByte(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE);
     }
 
+    public static Timestamps.TimestampAddMethod getPartitionAdd(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.ADD_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.ADD_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.ADD_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have add method");
+        }
+    }
+
     public static long getPartitionTableIndexOffset(int symbolWriterCount, int index) {
-        return getPartitionTableSizeOffset(symbolWriterCount) + 4 + index * 8L;
+        return getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolWriterCount), index);
+    }
+
+    public static long getPartitionTableIndexOffset(long partitionTableOffset, int index) {
+        return partitionTableOffset + 4 + index * 8L;
     }
 
     public static long getPartitionTableSizeOffset(int symbolWriterCount) {
@@ -222,11 +267,15 @@ public final class TableUtils {
     }
 
     public static long getSymbolWriterIndexOffset(int index) {
-        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 4L;
+        return TX_OFFSET_MAP_WRITER_COUNT + 4 + index * 8L;
     }
 
-    public static long getTxMemSize(int symbolWriterCount, int removedPartitionsCount) {
-        return getPartitionTableIndexOffset(symbolWriterCount, removedPartitionsCount);
+    public static long getSymbolWriterTransientIndexOffset(int index) {
+        return getSymbolWriterIndexOffset(index) + Integer.BYTES;
+    }
+
+    public static long getTxMemSize(int symbolWriterCount, int attachedPartitionsSize) {
+        return getPartitionTableIndexOffset(symbolWriterCount, attachedPartitionsSize);
     }
 
     public static boolean isValidColumnName(CharSequence seq) {
@@ -259,6 +308,44 @@ public final class TableUtils {
         return true;
     }
 
+    public static boolean isValidInfluxColumnName(CharSequence seq) {
+        for (int i = 0, l = seq.length(); i < l; i++) {
+            switch (seq.charAt(i)) {
+                default:
+                    break;
+                case ' ':
+                case '?':
+                case '.':
+                case ',':
+                case '\'':
+                case '\"':
+                case '\\':
+                case '/':
+                case '\0':
+                case ':':
+                case ')':
+                case '(':
+                case '+':
+                case '*':
+                case '%':
+                case '~':
+                case 0xfeff: // UTF-8 BOM (Byte Order Mark) can appear at the beginning of a character stream
+                    return false;
+                case '_':
+                    if (i < 1) {
+                        return false;
+                    }
+                    break;
+                case '-':
+                    if (i == 0 || i == l - 1) {
+                        return false;
+                    }
+                    break;
+            }
+        }
+        return true;
+    }
+
     public static long lock(FilesFacade ff, Path path) {
         long fd = ff.openRW(path);
         if (fd == -1) {
@@ -279,17 +366,51 @@ public final class TableUtils {
         path.put(".lock").$();
     }
 
-    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
-        long fd = ff.openRW(path);
-        if (fd > 0) {
-            return fd;
+    public static long mapRWOrClose(FilesFacade ff, LPSZ path, long fd, long size) {
+        final long mem = ff.mmap(fd, size, 0, Files.MAP_RW);
+        if (mem == -1) {
+            ff.close(fd);
+            throw CairoException.instance(ff.errno()).put("Could not mmap [file=").put(path).put(']');
         }
-
-        throw CairoException.instance(ff.errno()).put("Could not open file [path=").put(path).put(']');
-
+        return mem;
     }
 
-    public static void resetTxn(VirtualMemory txMem, int symbolMapCount, long txn, long dataVersion) {
+    public static void oldPartitionName(Path path, long txn) {
+        path.put("-x-").put(txn);
+    }
+
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path) {
+        return openRW(ff, path, LOG);
+    }
+
+    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRO(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+    }
+
+    public static void renameOrFail(FilesFacade ff, Path src, Path dst) {
+        if (!ff.rename(src, dst)) {
+            throw CairoException.instance(ff.errno()).put("could not rename ").put(src).put(" -> ").put(dst);
+        }
+    }
+
+    public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MappedReadWriteMemory mem) {
+        mem.of(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), ff.getPageSize());
+        mem.putLong(24, 0); // txn check
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(8, 0); // hashLo
+        mem.putLong(16, 0); // hashHi
+        Unsafe.getUnsafe().storeFence();
+        mem.putLong(0, 0); // txn
+        mem.putLong(32, 0); // count
+        mem.setSize(40);
+    }
+
+    public static void resetTxn(PagedVirtualMemory txMem, int symbolMapCount, long txn, long dataVersion, long partitionTableVersion) {
         // txn to let readers know table is being reset
         txMem.putLong(TX_OFFSET_TXN, txn);
         Unsafe.getUnsafe().storeFence();
@@ -306,10 +427,15 @@ public final class TableUtils {
         txMem.putLong(TX_OFFSET_STRUCT_VERSION, 0);
         // data version
         txMem.putLong(TX_OFFSET_DATA_VERSION, dataVersion);
+        // partition table version
+        txMem.putLong(TX_OFFSET_PARTITION_TABLE_VERSION, partitionTableVersion);
 
         txMem.putInt(TX_OFFSET_MAP_WRITER_COUNT, symbolMapCount);
         for (int i = 0; i < symbolMapCount; i++) {
-            txMem.putInt(getSymbolWriterIndexOffset(i), 0);
+            long offset = getSymbolWriterIndexOffset(i);
+            txMem.putInt(offset, 0);
+            offset += Integer.BYTES;
+            txMem.putInt(offset, 0);
         }
 
         Unsafe.getUnsafe().storeFence();
@@ -327,16 +453,19 @@ public final class TableUtils {
     /**
      * Sets the path to the directory of a partition taking into account the timestamp and the partitioning scheme.
      *
-     * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
-     * @param partitionBy Partitioning scheme
-     * @param timestamp   A timestamp in the partition
+     * @param path                  Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param partitionBy           Partitioning scheme
+     * @param timestamp             A timestamp in the partition
+     * @param calculatePartitionMax flag when caller is going to use the return value of this method
      * @return The last timestamp in the partition
      */
-    public static long setPathForPartition(Path path, int partitionBy, long timestamp) {
+    public static long setPathForPartition(Path path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
+        return setSinkForPartition(path.slash(), partitionBy, timestamp, calculatePartitionMax);
+    }
+
+    public static long setSinkForPartition(CharSink path, int partitionBy, long timestamp, boolean calculatePartitionMax) {
         int y, m, d;
         boolean leap;
-        path.put(Files.SEPARATOR);
-        final long partitionHi;
         switch (partitionBy) {
             case PartitionBy.DAY:
                 y = Timestamps.getYear(timestamp);
@@ -349,10 +478,12 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, d);
 
-                partitionHi = Timestamps.yearMicros(y, leap)
-                        + Timestamps.monthOfYearMicros(m, leap)
-                        + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.yearMicros(y, leap)
+                            + Timestamps.monthOfYearMicros(m, leap)
+                            + (d - 1) * Timestamps.DAY_MICROS + 24 * Timestamps.HOUR_MICROS - 1;
+                }
+                return 0;
             case PartitionBy.MONTH:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
@@ -361,30 +492,41 @@ public final class TableUtils {
                 path.put('-');
                 TimestampFormatUtils.append0(path, m);
 
-                partitionHi = Timestamps.yearMicros(y, leap)
-                        + Timestamps.monthOfYearMicros(m, leap)
-                        + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.yearMicros(y, leap)
+                            + Timestamps.monthOfYearMicros(m, leap)
+                            + Timestamps.getDaysPerMonth(m, leap) * 24L * Timestamps.HOUR_MICROS - 1;
+                }
+                return 0;
             case PartitionBy.YEAR:
                 y = Timestamps.getYear(timestamp);
                 leap = Timestamps.isLeapYear(y);
                 TimestampFormatUtils.append000(path, y);
-                partitionHi = Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
-                break;
+                if (calculatePartitionMax) {
+                    return Timestamps.addYear(Timestamps.yearMicros(y, leap), 1) - 1;
+                }
+                return 0;
             default:
                 path.put(DEFAULT_PARTITION_NAME);
-                partitionHi = Long.MAX_VALUE;
-                break;
+                return Long.MAX_VALUE;
         }
-
-        return partitionHi;
     }
 
     public static int toIndexKey(int symbolKey) {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
-    public static void validate(FilesFacade ff, ReadOnlyColumn metaMem, CharSequenceIntHashMap nameIndex) {
+    public static void txnPartition(CharSink path, long txn) {
+        path.put('.').put(txn);
+    }
+
+    public static void txnPartitionConditionally(CharSink path, long txn) {
+        if (txn > -1) {
+            txnPartition(path, txn);
+        }
+    }
+
+    public static void validate(FilesFacade ff, MappedReadOnlyMemory metaMem, CharSequenceIntHashMap nameIndex) {
         try {
             final int metaVersion = metaMem.getInt(TableUtils.META_OFFSET_VERSION);
             if (ColumnType.VERSION != metaVersion && metaVersion != 404) {
@@ -437,12 +579,12 @@ public final class TableUtils {
                 }
 
                 if (nameIndex.put(name, i)) {
-                    offset += ReadOnlyMemory.getStorageLength(name);
+                    offset += VmUtils.getStorageLength(name);
                 } else {
                     throw validationException(metaMem).put("Duplicate column: ").put(name).put(" at [").put(i).put(']');
                 }
             }
-        } catch (CairoException e) {
+        } catch (Throwable e) {
             nameIndex.clear();
             throw e;
         }
@@ -472,12 +614,29 @@ public final class TableUtils {
         }
     }
 
-    static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
-        long fd = ff.openRO(path);
-        if (fd == -1) {
-            throw CairoException.instance(ff.errno()).put("Cannot open: ").put(path);
+    public static void writeColumnTop(
+            FilesFacade ff,
+            Path path,
+            CharSequence columnName,
+            long columnTop,
+            long tempBuf
+    ) {
+        topFile(path, columnName);
+        final long fd = openRW(ff, path, LOG);
+        try {
+            //noinspection SuspiciousNameCombination
+            Unsafe.getUnsafe().putLong(tempBuf, columnTop);
+            O3Utils.allocateDiskSpace(ff, fd, Long.BYTES);
+            if (ff.write(fd, tempBuf, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.instance(ff.errno()).put("could not write top file [path=").put(path).put(']');
+            }
+        } finally {
+            ff.close(fd);
         }
+    }
 
+    static long readLongAtOffset(FilesFacade ff, Path path, long tempMem8b, long offset) {
+        final long fd = TableUtils.openRO(ff, path, LOG);
         try {
             if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
                 throw CairoException.instance(ff.errno()).put("Cannot read: ").put(path);
@@ -495,8 +654,8 @@ public final class TableUtils {
      */
     static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, long buf) {
         try {
-            if (ff.exists(topFile(path.chopZ(), name))) {
-                long fd = ff.openRO(path);
+            if (ff.exists(topFile(path.chop$(), name))) {
+                final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
                     if (ff.read(fd, buf, 8, 0) != 8) {
                         throw CairoException.instance(Os.errno()).put("Cannot read top of column ").put(path);
@@ -524,23 +683,23 @@ public final class TableUtils {
         return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
-    static long getColumnFlags(ReadOnlyColumn metaMem, int columnIndex) {
+    static long getColumnFlags(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 1);
     }
 
-    static boolean isColumnIndexed(ReadOnlyColumn metaMem, int columnIndex) {
+    static boolean isColumnIndexed(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
     }
 
-    static boolean isSequential(ReadOnlyColumn metaMem, int columnIndex) {
+    static boolean isSequential(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
-    static int getIndexBlockCapacity(ReadOnlyColumn metaMem, int columnIndex) {
+    static int getIndexBlockCapacity(ReadOnlyVirtualMemory metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 9);
     }
 
-    static int openMetaSwapFile(FilesFacade ff, AppendMemory mem, Path path, int rootLen, int retryCount) {
+    static int openMetaSwapFile(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int retryCount) {
         try {
             path.concat(META_SWAP_FILE_NAME).$();
             int l = path.length();
@@ -575,6 +734,19 @@ public final class TableUtils {
         }
     }
 
+    static void openMetaSwapFileByIndex(FilesFacade ff, AppendOnlyVirtualMemory mem, Path path, int rootLen, int swapIndex) {
+        try {
+            path.concat(META_SWAP_FILE_NAME);
+            if (swapIndex > 0) {
+                path.put('.').put(swapIndex);
+            }
+            path.$();
+            mem.of(ff, path, ff.getPageSize());
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     static String getTodoText(long code) {
         switch ((int) (code & 0xff)) {
             case TODO_TRUNCATE:
@@ -587,7 +759,7 @@ public final class TableUtils {
         }
     }
 
-    private static CairoException validationException(ReadOnlyColumn mem) {
+    private static CairoException validationException(MappedReadOnlyMemory mem) {
         return CairoException.instance(0).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
@@ -606,20 +778,85 @@ public final class TableUtils {
         }
     }
 
-    static long readPartitionSize(FilesFacade ff, Path path, long tempMem8b) {
-        int plen = path.length();
-        try {
-            if (ff.exists(path.concat(ARCHIVE_FILE_NAME).$())) {
-                long fd = ff.openRO(path);
-                if (fd == -1) {
-                    throw CairoException.instance(Os.errno()).put("Cannot open: ").put(path);
-                }
+    static DateFormat getPartitionDateFmt(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return fmtDay;
+            case PartitionBy.MONTH:
+                return fmtMonth;
+            case PartitionBy.YEAR:
+                return fmtYear;
+            case PartitionBy.NONE:
+                return fmtDefault;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have date format");
+        }
+    }
 
+    static Timestamps.TimestampFloorMethod getPartitionFloor(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.FLOOR_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.FLOOR_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.FLOOR_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have floor method");
+        }
+    }
+
+    static Timestamps.TimestampCeilMethod getPartitionCeil(int partitionBy) {
+        switch (partitionBy) {
+            case PartitionBy.DAY:
+                return Timestamps.CEIL_DD;
+            case PartitionBy.MONTH:
+                return Timestamps.CEIL_MM;
+            case PartitionBy.YEAR:
+                return Timestamps.CEIL_YYYY;
+            default:
+                throw new UnsupportedOperationException("partition by " + partitionBy + " does not have ceil method");
+        }
+    }
+
+    // Scans timestamp file
+    // returns size of partition detected, e.g. size of monotonic increase
+    // of timestamp longs read from 0 offset to the end of the file
+    // It also writes min and max values found in tempMem16b
+    static long readPartitionSizeMinMax(FilesFacade ff, Path path, CharSequence columnName, long tempMem16b, long timestamp) {
+        int plen = path.chop$().length();
+        try {
+            if (ff.exists(path.concat(columnName).put(FILE_SUFFIX_D).$())) {
+                final long fd = TableUtils.openRO(ff, path, LOG);
                 try {
-                    if (ff.read(fd, tempMem8b, 8, 0) != 8) {
-                        throw CairoException.instance(Os.errno()).put("Cannot read: ").put(path);
+                    long fileSize = ff.length(fd);
+                    long mappedMem = ff.mmap(fd, fileSize, 0, Files.MAP_RO);
+                    if (mappedMem < 0) {
+                        throw CairoException.instance(ff.errno()).put("Cannot map: ").put(path);
                     }
-                    return Unsafe.getUnsafe().getLong(tempMem8b);
+                    try {
+                        long minTimestamp;
+                        long maxTimestamp = timestamp;
+                        long size = 0L;
+
+                        for (long ptr = mappedMem, hi = mappedMem + fileSize; ptr < hi; ptr += Long.BYTES) {
+                            long ts = Unsafe.getUnsafe().getLong(ptr);
+                            if (ts >= maxTimestamp) {
+                                maxTimestamp = ts;
+                                size++;
+                            } else {
+                                break;
+                            }
+                        }
+                        if (size > 0) {
+                            minTimestamp = Unsafe.getUnsafe().getLong(mappedMem);
+                            Unsafe.getUnsafe().putLong(tempMem16b, minTimestamp);
+                            Unsafe.getUnsafe().putLong(tempMem16b + Long.BYTES, maxTimestamp);
+                        }
+                        return size;
+                    } finally {
+                        ff.munmap(mappedMem, fileSize);
+                    }
                 } finally {
                     ff.close(fd);
                 }
@@ -631,10 +868,41 @@ public final class TableUtils {
         }
     }
 
+    static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {
+        if (ff.mkdirs(path, mkDirMode) != 0) {
+            throw CairoException.instance(ff.errno()).put("could not create directories [file=").put(path).put(']');
+        }
+    }
+
+    static long openRW(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRW(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).$(']').$();
+            return fd;
+        }
+        throw CairoException.instance(ff.errno()).put("could not open read-write [file=").put(path).put(']');
+    }
+
     static {
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
         fmtDay = compiler.compile("yyyy-MM-dd");
         fmtMonth = compiler.compile("yyyy-MM");
         fmtYear = compiler.compile("yyyy");
+        fmtDefault = new DateFormat() {
+            @Override
+            public void format(long datetime, DateLocale locale, CharSequence timeZoneName, CharSink sink) {
+                sink.put(DEFAULT_PARTITION_NAME);
+            }
+
+            @Override
+            public long parse(CharSequence in, DateLocale locale) {
+                return 0;
+            }
+
+            @Override
+            public long parse(CharSequence in, int lo, int hi, DateLocale locale) {
+                return 0;
+            }
+        };
     }
 }

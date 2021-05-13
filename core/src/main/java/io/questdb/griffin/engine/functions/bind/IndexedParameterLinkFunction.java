@@ -151,6 +151,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
+    public CharSequence getSymbolB(Record rec) {
+        return getBase().getSymbolB(rec);
+    }
+
+    @Override
     public long getTimestamp(Record rec) {
         return getBase().getTimestamp(rec);
     }
@@ -182,5 +187,10 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     private Function getBase() {
         assert base != null;
         return base;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
     }
 }

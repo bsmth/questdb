@@ -34,6 +34,8 @@ public interface FilesFacade {
 
     boolean close(long fd);
 
+    int copy(LPSZ from, LPSZ to);
+
     int errno();
 
     boolean exists(LPSZ path);
@@ -53,6 +55,8 @@ public interface FilesFacade {
     long getLastModified(LPSZ path);
 
     int msync(long addr, long len, boolean async);
+
+    int fsync(long fd);
 
     long getMapPageSize();
 
@@ -74,7 +78,9 @@ public interface FilesFacade {
 
     int mkdirs(LPSZ path, int mode);
 
-    long mmap(long fd, long size, long offset, int mode);
+    long mmap(long fd, long len, long offset, int flags);
+    
+    long mmap(long fd, long len, long offset, int flags, long baseAddress);
 
     long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode);
 
@@ -92,7 +98,7 @@ public interface FilesFacade {
 
     boolean rename(LPSZ from, LPSZ to);
 
-    boolean rmdir(Path name);
+    int rmdir(Path name);
 
     boolean touch(LPSZ path);
 

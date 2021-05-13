@@ -43,11 +43,6 @@ public class LongList implements Mutable, LongVec {
         this(capacity, DEFAULT_NO_ENTRY_VALUE);
     }
 
-    @Override
-    public LongVec newInstance() {
-        return new LongList(size());
-    }
-
     public LongList(int capacity, long noEntryValue) {
         this.buffer = new long[capacity];
         this.noEntryValue = noEntryValue;
@@ -66,10 +61,14 @@ public class LongList implements Mutable, LongVec {
     }
 
     public void add(LongList that) {
+        add(that, 0, that.size());
+    }
+
+    public void add(LongList that, int lo, int hi) {
         int p = pos;
-        int s = that.size();
+        int s = hi - lo;
         ensureCapacity(p + s);
-        System.arraycopy(that.buffer, 0, this.buffer, p, s);
+        System.arraycopy(that.buffer, lo, this.buffer, p, s);
         pos += s;
     }
 
@@ -90,7 +89,7 @@ public class LongList implements Mutable, LongVec {
         while (low < high) {
 
             if (high - low < 65) {
-                return scanSearch(v);
+                return scanSearch(v, low, high);
             }
 
             int mid = (low + high - 1) >>> 1;
@@ -104,6 +103,39 @@ public class LongList implements Mutable, LongVec {
                 return mid;
         }
         return -(low + 1);
+    }
+
+    public int binarySearchBlock(int low, int high, int shift, long v) {
+        // Binary searches using 2^shift blocks
+        // e.g. when shift == 2
+        // this method treats 4 longs as 1 entry
+        // taking first long for the comparisons
+        // and ignoring the other 3 values.
+
+        // This is useful when list is a dictionary where first long is a key
+        // and subsequent X (1, 3, 7 etc.) values are the value of the dictionary.
+
+        // assert that scan interval is integer number of blocks
+        assert (high - low) % (1 << shift) == 0;
+        high = high >> shift;
+        low = low >> shift;
+
+        while (low < high) {
+            if (high - low < 65) {
+                return scanSearchBlock(v, low, high, shift);
+            }
+
+            int mid = (low + high - 1) / 2;
+            long midVal = buffer[mid << shift];
+
+            if (midVal < v)
+                low = mid + 1;
+            else if (midVal > v)
+                high = mid;
+            else
+                return mid << shift;
+        }
+        return -((low << shift) + 1);
     }
 
     public void clear() {
@@ -182,7 +214,18 @@ public class LongList implements Mutable, LongVec {
      * @return element at the specified position.
      */
     public long getQuick(int index) {
+        assert index < pos;
         return buffer[index];
+    }
+
+    public void setQuick(int index, long value) {
+        assert index < pos;
+        buffer[index] = value;
+    }
+
+    @Override
+    public LongVec newInstance() {
+        return new LongList(size());
     }
 
     /**
@@ -228,6 +271,14 @@ public class LongList implements Mutable, LongVec {
         buffer[index] = buffer[index] + 1;
     }
 
+    public void insert(int index, int length) {
+        ensureCapacity(pos + length);
+        if (pos > index) {
+            System.arraycopy(buffer, index, buffer, index + length, pos - index);
+        }
+        pos += length;
+    }
+
     public void remove(long v) {
         int index = indexOf(v);
         if (index > -1) {
@@ -246,6 +297,18 @@ public class LongList implements Mutable, LongVec {
         buffer[--pos] = noEntryValue;
     }
 
+    public void removeIndexBlock(int index, int slotSize) {
+        if (pos < 1 || index >= pos) {
+            return;
+        }
+        int move = pos - index - slotSize;
+        if (move > 0) {
+            System.arraycopy(buffer, index + slotSize, buffer, index, move);
+        }
+        pos -= slotSize;
+        Arrays.fill(buffer, pos, pos + slotSize, noEntryValue);
+    }
+
     public void seed(int capacity, long value) {
         ensureCapacity(capacity);
         pos = capacity;
@@ -255,7 +318,6 @@ public class LongList implements Mutable, LongVec {
     public void seed(int fromIndex, int count, long value) {
         int capacity = fromIndex + count;
         ensureCapacity(capacity);
-        pos = capacity;
         Arrays.fill(buffer, fromIndex, capacity, value);
     }
 
@@ -267,20 +329,15 @@ public class LongList implements Mutable, LongVec {
         throw new ArrayIndexOutOfBoundsException(index);
     }
 
-    final public void setPos(int pos) {
-        ensureCapacity(pos);
-        this.pos = pos;
-    }
-
-
     public void setAll(int capacity, long value) {
         ensureCapacity(capacity);
         pos = capacity;
         Arrays.fill(buffer, value);
     }
 
-    public void setQuick(int index, long value) {
-        buffer[index] = value;
+    final public void setPos(int pos) {
+        ensureCapacity(pos);
+        this.pos = pos;
     }
 
     public void shuffle(Rnd rnd) {
@@ -335,10 +392,9 @@ public class LongList implements Mutable, LongVec {
         return -1;
     }
 
-    private int scanSearch(long v) {
-        int sz = size();
-        for (int i = 0; i < sz; i++) {
-            long f = getQuick(i);
+    private int scanSearch(long v, int low, int high) {
+        for (int i = low; i < high; i++) {
+            long f = buffer[i];
             if (f == v) {
                 return i;
             }
@@ -346,7 +402,21 @@ public class LongList implements Mutable, LongVec {
                 return -(i + 1);
             }
         }
-        return -(sz + 1);
+        return -(high + 1);
+    }
+
+    private int scanSearchBlock(long v, int low, int high, int bitHint) {
+        for (int i = low; i < high; i++) {
+            int index = i << bitHint;
+            long f = buffer[index];
+            if (f == v) {
+                return index;
+            }
+            if (f > v) {
+                return -(index + 1);
+            }
+        }
+        return -((high << bitHint) + 1);
     }
 
     private void swap(int a, int b) {

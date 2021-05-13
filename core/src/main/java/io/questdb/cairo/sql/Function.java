@@ -111,6 +111,8 @@ public interface Function extends Closeable {
 
     CharSequence getSymbol(Record rec);
 
+    CharSequence getSymbolB(Record rec);
+
     long getTimestamp(Record rec);
 
     int getType();
@@ -127,6 +129,12 @@ public interface Function extends Closeable {
     }
 
     default boolean isConstant() {
+        return false;
+    }
+
+    // If function is constant for query, e.g. record independent
+    // For example now() and bind variables are Runtime Constants
+    default boolean isRuntimeConstant() {
         return false;
     }
 
