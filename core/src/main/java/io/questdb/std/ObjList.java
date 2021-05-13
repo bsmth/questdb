@@ -40,13 +40,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     @SuppressWarnings("unchecked")
-    public ObjList(ObjList<T> other) {
-        this.buffer = (T[]) new Object[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
-        setPos(other.size());
-        System.arraycopy(other.buffer, 0, this.buffer, 0, pos);
-    }
-
-    @SuppressWarnings("unchecked")
     public ObjList(int capacity) {
         this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
@@ -105,7 +98,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public T getAndSetQuick(int index, T value) {
-        assert index < pos;
         T v = buffer[index];
         buffer[index] = value;
         return v;
@@ -133,7 +125,6 @@ public class ObjList<T> implements Mutable, Sinkable {
      * @return element at the specified position.
      */
     public T getQuick(int index) {
-        assert index < pos;
         return buffer[index];
     }
 
@@ -171,14 +162,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     @Override
     public boolean equals(Object that) {
         return this == that || that instanceof ObjList && equals((ObjList<?>) that);
-    }
-
-    public void insert(int index, int length) {
-        ensureCapacity(pos + length);
-        if (pos > index) {
-            System.arraycopy(buffer, index, buffer, index + length, pos - index);
-        }
-        pos += length;
     }
 
     /**
@@ -270,7 +253,6 @@ public class ObjList<T> implements Mutable, Sinkable {
     }
 
     public void setQuick(int index, T value) {
-        assert index < pos;
         buffer[index] = value;
     }
 

@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -65,10 +67,21 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "2021-04-25T00:00:02.700000Z\n" +
                 "2021-04-25T00:00:03.700000Z\n";
 
-        assertSql("SELECT timestamp_sequence(\n" +
-                "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
-                "         rnd_long(1,10,2) * 100000L\n" +
-                ") ts from long_sequence(10, 900, 800)", expected);
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_sequence(\n" +
+                            "         to_timestamp('2021-04-25T00:00:00', 'yyyy-MM-ddTHH:mm:ss'),\n" +
+                            "         rnd_long(1,10,2) * 100000L\n" +
+                            ") ts from long_sequence(10, 900, 800)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 
     @Test
@@ -85,10 +98,18 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "9\t1970-01-01T00:00:00.008000Z\n" +
                 "10\t1970-01-01T00:00:00.009000Z\n";
 
-        assertSql(
-                "select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)",
-                expected
-        );
+        assertMemoryLeak(() -> {
+            try (RecordCursorFactory factory = compiler.compile("select x ac, timestamp_sequence(systimestamp(), 1000) ts from long_sequence(10)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
     }
 
     @Test
@@ -105,19 +126,14 @@ public class TimestampSequenceFunctionFactoryTest extends AbstractGriffinTest {
                 "9\t1970-01-01T00:00:00.008000Z\n" +
                 "10\t1970-01-01T00:00:00.009000Z\n";
 
-        assertSql("select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)", expected);
-    }
-
-    private void assertSql(String sql, String expected) throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                TestUtils.assertSql(
-                        compiler,
-                        sqlExecutionContext,
-                        sql,
-                        sink,
-                        expected
-                );
+            try (RecordCursorFactory factory = compiler.compile("select x ac, timestamp_sequence(0, 1000) ts from long_sequence(10)",
+                    sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
             } finally {
                 sqlExecutionContext.setRandom(null);
             }

@@ -25,22 +25,50 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.mp.CountDownLatchSPI;
-import io.questdb.std.AbstractLockable;
 import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 
-public class VectorAggregateEntry extends AbstractLockable implements Mutable {
+public class VectorAggregateEntry implements Mutable {
+
+    private static final long TARGET_SEQUENCE_OFFSET;
+
+    static {
+        TARGET_SEQUENCE_OFFSET = Unsafe.getFieldOffset(VectorAggregateEntry.class, "targetSequence");
+    }
+
     private long[] pRosti;
     private long keyAddress;
     private long valueAddress;
     private long valueCount;
     private VectorAggregateFunction func;
+    private int srcSequence;
+    // to "lock" the entry thread must successfully CAS targetSequence form "srcSequence" value
+    // to "srcSequence+1". Executing thread must not be changing value of "srcSequence"
+    @SuppressWarnings({"FieldCanBeLocal", "unused"})
+    private int targetSequence;
     private CountDownLatchSPI doneLatch;
 
-    @Override
-    public void clear() {
-        this.valueAddress = 0;
-        this.valueCount = 0;
-        func = null;
+    void of(
+            int sequence,
+            VectorAggregateFunction vaf,
+            long[] pRosti,
+            long keyPageAddress,
+            long valuePageAddress,
+            long valuePageCount,
+            CountDownLatchSPI doneLatch
+    ) {
+        this.pRosti = pRosti;
+        this.keyAddress = keyPageAddress;
+        this.valueAddress = valuePageAddress;
+        this.valueCount = valuePageCount;
+        this.func = vaf;
+        this.srcSequence = sequence;
+        this.targetSequence = sequence;
+        this.doneLatch = doneLatch;
+    }
+
+    public boolean tryLock() {
+        return Unsafe.cas(this, TARGET_SEQUENCE_OFFSET, srcSequence, srcSequence + 1);
     }
 
     public boolean run(int workerId) {
@@ -56,21 +84,10 @@ public class VectorAggregateEntry extends AbstractLockable implements Mutable {
         return false;
     }
 
-    void of(
-            int sequence,
-            VectorAggregateFunction vaf,
-            long[] pRosti,
-            long keyPageAddress,
-            long valuePageAddress,
-            long valuePageCount,
-            CountDownLatchSPI doneLatch
-    ) {
-        of(sequence);
-        this.pRosti = pRosti;
-        this.keyAddress = keyPageAddress;
-        this.valueAddress = valuePageAddress;
-        this.valueCount = valuePageCount;
-        this.func = vaf;
-        this.doneLatch = doneLatch;
+    @Override
+    public void clear() {
+        this.valueAddress = 0;
+        this.valueCount = 0;
+        func = null;
     }
 }

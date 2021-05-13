@@ -184,11 +184,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public CharSequence getSymbolB(Record rec) {
-            return null;
-        }
-
-        @Override
         public long getTimestamp(Record rec) {
             return 0;
         }

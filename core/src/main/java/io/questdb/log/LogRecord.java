@@ -31,10 +31,6 @@ import java.io.File;
 public interface LogRecord {
     void $();
 
-    default void I$() {
-        $(']').$();
-    }
-
     LogRecord $(CharSequence sequence);
 
     LogRecord $(CharSequence sequence, int lo, int hi);

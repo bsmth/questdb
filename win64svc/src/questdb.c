@@ -83,6 +83,7 @@ void buildJavaArgs(CONFIG *config) {
     LPCSTR javaOpts = "-XX:+UnlockExperimentalVMOptions"
                       " -XX:+AlwaysPreTouch"
                       " -XX:+UseParallelOldGC"
+                      " --add-exports java.base/jdk.internal.math=io.questdb"
                       " ";
 
     // put together classpath

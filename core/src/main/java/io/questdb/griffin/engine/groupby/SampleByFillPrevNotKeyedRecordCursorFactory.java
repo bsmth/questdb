@@ -63,7 +63,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory implements RecordCursor
                     timestampSampler,
                     simpleMapValue
             );
-        } catch (Throwable e) {
+        } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }

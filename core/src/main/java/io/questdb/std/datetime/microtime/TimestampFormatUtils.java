@@ -24,7 +24,10 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -42,7 +45,6 @@ public class TimestampFormatUtils {
     public static final DateFormat GREEDY_MILLIS2_UTC_FORMAT;
     public static final DateFormat USEC_UTC_FORMAT;
     public static final DateFormat PG_TIMESTAMP_FORMAT;
-    public static final DateFormat PG_TIMESTAMPZ_FORMAT;
     public static final DateFormat PG_TIMESTAMP_MILLI_TIME_Z_FORMAT;
     public static final DateFormat PG_TIMESTAMP_TIME_Z_FORMAT;
     public static final DateFormat NANOS_UTC_FORMAT;
@@ -50,12 +52,6 @@ public class TimestampFormatUtils {
 
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
     public static final DateLocale enLocale = DateLocaleFactory.INSTANCE.getLocale("en");
-    public static final int TIMESTAMP_FORMAT_MIN_LENGTH;
-    private static final String PG_TIMESTAMP_MILLI_TIME_Z_PATTERN = "y-MM-dd HH:mm:ss.SSSz";
-    private static final String GREEDY_MILLIS1_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.Sz";
-    private static final String USEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSUUUz";
-    private static final String SEC_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ssz";
-    private static final String GREEDY_MILLIS2_UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSz";
     private static final DateFormat HTTP_FORMAT;
     private static final DateFormat[] FORMATS;
     static long referenceYear;
@@ -146,7 +142,7 @@ public class TimestampFormatUtils {
         return referenceYear;
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmmZ
+    // YYYY-MM-DDThh:mm:ss.mmm
     public static long parseTimestamp(CharSequence seq) throws NumericException {
         return parseTimestamp(seq, 0, seq.length());
     }
@@ -368,36 +364,23 @@ public class TimestampFormatUtils {
     static {
         updateReferenceYear(Os.currentTimeMicros());
         TimestampFormatCompiler compiler = new TimestampFormatCompiler();
+        UTC_FORMAT = compiler.compile(UTC_PATTERN);
         HTTP_FORMAT = compiler.compile("E, d MMM yyyy HH:mm:ss Z");
+        USEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUz");
+        SEC_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ssz");
+        GREEDY_MILLIS1_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.Sz");
+        GREEDY_MILLIS2_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSz");
         PG_TIMESTAMP_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSUUU");
-        PG_TIMESTAMPZ_FORMAT = compiler.compile("y-MM-ddTHH:mm:ss.SSSUUU");
         PG_TIMESTAMP_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ssz");
+        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = compiler.compile("y-MM-dd HH:mm:ss.SSSz");
         NANOS_UTC_FORMAT = compiler.compile("yyyy-MM-ddTHH:mm:ss.SSSUUUNNNz");
-
-        String[] patterns = new String[]{
-                PG_TIMESTAMP_MILLI_TIME_Z_PATTERN,
-                GREEDY_MILLIS1_UTC_PATTERN,
-                USEC_UTC_PATTERN,
-                SEC_UTC_PATTERN,
-                GREEDY_MILLIS2_UTC_PATTERN,
-                UTC_PATTERN
+        FORMATS = new DateFormat[]{
+                PG_TIMESTAMP_MILLI_TIME_Z_FORMAT,
+                GREEDY_MILLIS1_UTC_FORMAT,
+                USEC_UTC_FORMAT,
+                SEC_UTC_FORMAT,
+                GREEDY_MILLIS2_UTC_FORMAT,
+                UTC_FORMAT
         };
-        FORMATS = new DateFormat[patterns.length];
-        CharSequenceObjHashMap<DateFormat> dateFormats = new CharSequenceObjHashMap<>();
-        int patternMinLength = Integer.MAX_VALUE;
-        for (int i = 0; i < patterns.length; i++) {
-            String pattern = patterns[i];
-            DateFormat format = compiler.compile(pattern);
-            dateFormats.put(pattern, format);
-            FORMATS[i] = format;
-            patternMinLength = Math.min(patternMinLength, pattern.length());
-        }
-        TIMESTAMP_FORMAT_MIN_LENGTH = patternMinLength;
-        PG_TIMESTAMP_MILLI_TIME_Z_FORMAT = dateFormats.get(PG_TIMESTAMP_MILLI_TIME_Z_PATTERN);
-        GREEDY_MILLIS1_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS1_UTC_PATTERN);
-        USEC_UTC_FORMAT = dateFormats.get(USEC_UTC_PATTERN);
-        SEC_UTC_FORMAT = dateFormats.get(SEC_UTC_PATTERN);
-        GREEDY_MILLIS2_UTC_FORMAT = dateFormats.get(GREEDY_MILLIS2_UTC_PATTERN);
-        UTC_FORMAT = dateFormats.get(UTC_PATTERN);
     }
 }

@@ -189,7 +189,7 @@ public class TextMetadataParserTest {
             Assert.fail();
         } catch (JsonException e) {
             Assert.assertEquals(position, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), message);
+            TestUtils.assertContains(e.getMessage(), message);
         } finally {
             Unsafe.free(buf, schema.length());
         }

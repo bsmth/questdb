@@ -46,26 +46,22 @@ public class AndFunctionFactory implements FunctionFactory {
         Function leftFunc = args.getQuick(0);
         Function rightFunc = args.getQuick(1);
         if (leftFunc.isConstant()) {
-            try {
+            try (leftFunc) {
                 if (leftFunc.getBool(null)) {
                     return rightFunc;
                 }
                 Misc.free(rightFunc);
                 return new BooleanConstant(position, false);
-            } finally {
-                leftFunc.close();
             }
         }
 
         if (rightFunc.isConstant()) {
-            try {
+            try (rightFunc) {
                 if (rightFunc.getBool(null)) {
                     return leftFunc;
                 }
                 Misc.free(leftFunc);
                 return new BooleanConstant(position, false);
-            } finally {
-                rightFunc.close();
             }
         }
         return new MyBooleanFunction(position, leftFunc, rightFunc);

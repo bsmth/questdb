@@ -64,7 +64,7 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory implements RecordCursor
                     timestampIndex,
                     timestampSampler
             );
-        } catch (Throwable e) {
+        } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             throw e;
         }

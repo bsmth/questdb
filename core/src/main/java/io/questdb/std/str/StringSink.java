@@ -25,9 +25,10 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
 import org.jetbrains.annotations.NotNull;
 
-public class StringSink extends AbstractCharSink implements MutableCharSink, CloneableMutable {
+public class StringSink extends AbstractCharSink implements CharSequence, Mutable, CloneableMutable {
     private final StringBuilder builder = new StringBuilder();
 
     public void clear(int pos) {
@@ -98,17 +99,16 @@ public class StringSink extends AbstractCharSink implements MutableCharSink, Clo
         return this;
     }
 
-    @Override
-    public CharSink put(char[] chars, int start, int len) {
-        builder.append(chars, start, len);
-        return this;
-    }
-
     public CharSink put(char c, int n) {
-        //noinspection StringRepeatCanBeUsed
         for (int i = 0; i < n; i++) {
             builder.append(c);
         }
+        return this;
+    }
+
+    @Override
+    public CharSink put(char[] chars, int start, int len) {
+        builder.append(chars, start, len);
         return this;
     }
 }

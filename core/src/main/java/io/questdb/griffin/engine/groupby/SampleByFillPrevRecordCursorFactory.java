@@ -77,7 +77,7 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
                     timestampIndex,
                     timestampSampler
             );
-        } catch (Throwable e) {
+        } catch (CairoException e) {
             Misc.freeObjList(recordFunctions);
             Misc.free(map);
             throw e;
@@ -133,7 +133,7 @@ public class SampleByFillPrevRecordCursorFactory implements RecordCursorFactory 
             // we know base cursor has value
             assert next;
             return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
+        } catch (CairoException ex) {
             baseCursor.close();
             throw ex;
         }

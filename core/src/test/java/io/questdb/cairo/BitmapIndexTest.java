@@ -25,9 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
-import io.questdb.cairo.vm.PagedSlidingReadOnlyMemory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
@@ -50,7 +47,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int plen = path.length();
         try {
             FilesFacade ff = configuration.getFilesFacade();
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
+            try (AppendMemory mem = new AppendMemory(ff, BitmapIndexUtils.keyFileName(path, name), ff.getPageSize())) {
                 BitmapIndexWriter.initKeyMemory(mem, Numbers.ceilPow2(valueBlockCapacity));
             }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name));
@@ -61,17 +58,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
     @Override
     @Before
-    public void setUp() {
+    public void setUp0() {
         path = new Path().of(configuration.getRoot());
         plen = path.length();
-        super.setUp();
+        super.setUp0();
     }
 
     @Override
     @After
-    public void tearDown() {
+    public void tearDown0() {
         Misc.free(path);
-        super.tearDown();
+        super.tearDown0();
     }
 
     @Test
@@ -187,7 +184,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+                try (ReadWriteMemory mem = new ReadWriteMemory()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
                         mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
@@ -220,7 +217,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testBackwardReaderConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertBackwardReaderConstructorFail("Unknown format");
@@ -309,7 +306,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.assertFalse(cursor.hasNext());
 
             try (Path path = new Path();
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(
+                 ReadWriteMemory mem = new ReadWriteMemory(
                          configuration.getFilesFacade(),
                          path.of(root).concat("x").put(".k").$(),
                          configuration.getFilesFacade().getPageSize())
@@ -383,7 +380,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader reader = new BitmapIndexFwdReader(configuration, path.trimTo(plen), "x", 0)) {
 
-                try (PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+                try (ReadWriteMemory mem = new ReadWriteMemory()) {
                     try (Path path = new Path()) {
                         path.of(configuration.getRoot()).concat("x").put(".k").$();
                         mem.of(configuration.getFilesFacade(), path, configuration.getFilesFacade().getPageSize());
@@ -476,7 +473,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             Assert.assertFalse(cursor.hasNext());
 
             try (Path path = new Path();
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory(
+                 ReadWriteMemory mem = new ReadWriteMemory(
                          configuration.getFilesFacade(),
                          path.of(root).concat("x").put(".k").$(),
                          configuration.getFilesFacade().getPageSize())
@@ -533,7 +530,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         int N = 100000000;
         final int MOD = 1024;
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+            try (AppendMemory mem = new AppendMemory()) {
 
                 mem.of(configuration.getFilesFacade(), path.concat("x.dat").$(), configuration.getFilesFacade().getMapPageSize());
 
@@ -541,7 +538,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                     mem.putInt(rnd.nextPositiveInt() & (MOD - 1));
                 }
 
-                try (PagedSlidingReadOnlyMemory rwin = new PagedSlidingReadOnlyMemory()) {
+                try (SlidingWindowMemory rwin = new SlidingWindowMemory()) {
                     rwin.of(mem);
 
                     create(configuration, path.trimTo(plen), "x", N / MOD / 128);
@@ -786,7 +783,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorBadSig() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED);
             }
             assertWriterConstructorFail("Unknown format");
@@ -804,7 +801,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorIncorrectValueCount() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(9);
                 mem.putLong(1000);
@@ -820,7 +817,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testWriterConstructorKeyMismatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (AppendOnlyVirtualMemory mem = openKey()) {
+            try (AppendMemory mem = openKey()) {
                 mem.putByte(BitmapIndexUtils.SIGNATURE);
                 mem.skip(20);
                 mem.putLong(300);
@@ -830,7 +827,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
-    private static void indexInts(PagedSlidingReadOnlyMemory srcMem, BitmapIndexWriter writer, long hi) {
+    private static void indexInts(SlidingWindowMemory srcMem, BitmapIndexWriter writer, long hi) {
         srcMem.updateSize();
         for (long r = 0L; r < hi; r++) {
             final long offset = r * 4;
@@ -912,14 +909,14 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
     }
 
-    private AppendOnlyVirtualMemory openKey() {
+    private AppendMemory openKey() {
         try (Path path = new Path()) {
-            return new AppendOnlyVirtualMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
+            return new AppendMemory(configuration.getFilesFacade(), path.of(configuration.getRoot()).concat("x").put(".k").$(), configuration.getFilesFacade().getPageSize());
         }
     }
 
     private void setupIndexHeader() {
-        try (AppendOnlyVirtualMemory mem = openKey()) {
+        try (AppendMemory mem = openKey()) {
             mem.putByte(BitmapIndexUtils.SIGNATURE);
             mem.putLong(10); // sequence
             mem.putLong(0); // value mem size

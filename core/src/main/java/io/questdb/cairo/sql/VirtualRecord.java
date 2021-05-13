@@ -150,11 +150,6 @@ public class VirtualRecord implements ColumnTypes, DelegatingRecord {
     }
 
     @Override
-    public CharSequence getSymB(int col) {
-        return getFunction(col).getSymbolB(base);
-    }
-
-    @Override
     public long getTimestamp(int col) {
         return getFunction(col).getTimestamp(base);
     }
@@ -166,7 +161,7 @@ public class VirtualRecord implements ColumnTypes, DelegatingRecord {
 
     @Override
     public int getColumnType(int columnIndex) {
-        return getFunction(columnIndex).getType();
+        return functions.getQuick(columnIndex).getType();
     }
 
     public ObjList<? extends Function> getFunctions() {

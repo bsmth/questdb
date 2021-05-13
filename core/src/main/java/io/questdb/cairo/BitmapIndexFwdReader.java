@@ -35,24 +35,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
 
-    public BitmapIndexFwdReader(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long unIndexedNullCount,
-            long partitionTxn
-    ) {
-        of(configuration, path, name, unIndexedNullCount, partitionTxn);
-    }
-
-    // test only
-    public BitmapIndexFwdReader(
-            CairoConfiguration configuration,
-            Path path,
-            CharSequence name,
-            long unIndexedNullCount
-    ) {
-        of(configuration, path, name, unIndexedNullCount, -1);
+    public BitmapIndexFwdReader(CairoConfiguration configuration, Path path, CharSequence name, long unIndexedNullCount) {
+        of(configuration, path, name, unIndexedNullCount);
     }
 
     @Override

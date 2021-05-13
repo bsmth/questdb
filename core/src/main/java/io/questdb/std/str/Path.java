@@ -24,8 +24,10 @@
 
 package io.questdb.std.str;
 
-import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
@@ -40,9 +42,6 @@ import java.io.Closeable;
  * </p>
  */
 public class Path extends AbstractCharSink implements Closeable, LPSZ {
-    public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
-    public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
-    public static final Closeable CLEANER = Path::clearThreadLocals;
     private static final int OVERHEAD = 4;
     private long ptr;
     private long wptr;
@@ -58,33 +57,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
     }
 
-    public static void clearThreadLocals() {
-        Misc.free(PATH.get());
-        PATH.remove();
-
-        Misc.free(PATH2.get());
-        PATH2.remove();
-    }
-
-    public static Path getThreadLocal(CharSequence root) {
-        return PATH.get().of(root);
-    }
-
-    public static Path getThreadLocal2(CharSequence root) {
-        return PATH2.get().of(root);
-    }
-
     public Path $() {
         if (1 + (wptr - ptr) >= capacity) {
             extend((int) (16 + (wptr - ptr)));
         }
         Unsafe.getUnsafe().putByte(wptr++, (byte) 0);
         return this;
-    }
-
-    public Path slash$() {
-        ensureSeparator();
-        return $();
     }
 
     @Override
@@ -97,7 +75,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
      *
      * @return instance of this
      */
-    public Path chop$() {
+    public Path chopZ() {
         trimTo(this.length());
         return this;
     }
@@ -209,7 +187,6 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     public Path of(CharSequence str) {
-        checkClosed();
         if (str == this) {
             this.len = str.length();
             this.wptr = ptr + len;
@@ -221,14 +198,7 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
         }
     }
 
-    private void checkClosed() {
-        if (ptr == 0) {
-            this.ptr = this.wptr = Unsafe.malloc(capacity + 1);
-        }
-    }
-
     public Path of(CharSequence str, int from, int to) {
-        checkClosed();
         this.wptr = ptr;
         this.len = 0;
         return concat(str, from, to);
@@ -241,23 +211,12 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     @Override
-    public Path put(int value) {
-        super.put(value);
-        return this;
-    }
-
-    @Override
     protected void putUtf8Special(char c) {
         if (c == '/' && Os.type == Os.WINDOWS) {
             put('\\');
         } else {
             put(c);
         }
-    }
-
-    public Path slash() {
-        ensureSeparator();
-        return this;
     }
 
     @Override
@@ -285,8 +244,10 @@ public class Path extends AbstractCharSink implements Closeable, LPSZ {
     }
 
     private void extend(int len) {
-        long p = Unsafe.realloc(ptr, this.capacity + 1, len + 1);
+        long p = Unsafe.malloc(len + 1);
+        Unsafe.getUnsafe().copyMemory(ptr, p, this.len);
         long d = wptr - ptr;
+        Unsafe.free(this.ptr, this.capacity + 1);
         this.ptr = p;
         this.wptr = p + d;
         this.capacity = len;

@@ -593,13 +593,7 @@ class SqlOptimiser {
                     if (qualifies) {
                         postFilterRemoved.add(k);
                         QueryModel m = parent.getJoinModels().getQuick(index);
-                        final ExpressionNode node = filterNodes.getQuick(k);
-                        // it is possible that filter references only top query via alias
-                        // we will need to strip these aliases before assigning filter
-                        if (index == 0) {
-                            traversalAlgo.traverse(node, literalRewritingVisitor.of(m.getAliasToColumnNameMap()));
-                        }
-                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), node));
+                        m.setPostJoinWhereClause(concatFilters(m.getPostJoinWhereClause(), filterNodes.getQuick(k)));
                     }
                 }
             }
@@ -1679,7 +1673,7 @@ class SqlOptimiser {
                     }
 
                     final QueryModel nested = parent.getNestedModel();
-                    if (nested == null || nested.getLatestBy().size() > 0 || nested.getLimitLo() != null || nested.getLimitHi() != null) {
+                    if (nested == null || nested.getLatestBy().size() > 0) {
                         // there is no nested model for this table, keep where clause element with this model
                         addWhereNode(parent, node);
                     } else {
@@ -1778,8 +1772,7 @@ class SqlOptimiser {
                 parseFunctionAndEnumerateColumns(model, executionContext);
                 return;
             } catch (SqlException e) {
-                throw SqlException.$(tableNamePosition, "" +
-                        "table does not exist [name=").put(tableName).put(']');
+                throw SqlException.$(tableNamePosition, "table does not exist [name=").put(tableName).put(']');
             }
         }
 

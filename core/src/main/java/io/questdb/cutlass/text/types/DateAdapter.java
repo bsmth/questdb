@@ -32,7 +32,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.str.DirectByteCharSequence;
 
-public class DateAdapter extends AbstractTypeAdapter implements Mutable, TimestampCompatibleAdapter {
+public class DateAdapter extends AbstractTypeAdapter implements Mutable {
     private DateLocale locale;
     private DateFormat format;
 
@@ -59,16 +59,12 @@ public class DateAdapter extends AbstractTypeAdapter implements Mutable, Timesta
 
     @Override
     public void write(TableWriter.Row row, int column, DirectByteCharSequence value) throws Exception {
-        row.putDate(column, parseLong(value));
+        row.putDate(column, format.parse(value, locale));
     }
 
-    private long parseLong(DirectByteCharSequence value) throws NumericException {
+
+    public long getDate(DirectByteCharSequence value) throws NumericException {
         return format.parse(value, locale);
-    }
-
-    @Override
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
-        return parseLong(value) * 1000;
     }
 
     public DateAdapter of(DateFormat format, DateLocale locale) {

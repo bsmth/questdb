@@ -25,14 +25,10 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.*;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class InsertStatementImpl implements InsertStatement {
@@ -59,16 +55,13 @@ public class InsertStatementImpl implements InsertStatement {
         this.copier = copier;
         this.timestampFunction = timestampFunction;
         if (timestampFunction != null) {
-            if (timestampFunction.getType() != ColumnType.STRING) {
-                rowFactory = this::getRowWithTimestamp;
-            } else {
-                rowFactory = this::getRowWithStringTimestamp;
-            }
+            rowFactory = this::getRowWithTimestamp;
         } else {
             rowFactory = this::getRowWithoutTimestamp;
         }
         this.structureVersion = structureVersion;
     }
+
     @Override
     public void close() {
         detachWriter();
@@ -109,18 +102,7 @@ public class InsertStatementImpl implements InsertStatement {
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriter tableWriter) {
-        long timestamp = timestampFunction.getTimestamp(null);
-        return tableWriter.newRow(timestamp);
-    }
-
-    private TableWriter.Row getRowWithStringTimestamp(TableWriter tableWriter) {
-        CharSequence tsStr = timestampFunction.getStr(null);
-        try {
-            long timestamp = IntervalUtils.parseFloorPartialDate(tsStr);
-            return tableWriter.newRow(timestamp);
-        } catch (NumericException e) {
-            throw CairoException.instance(0).put("Invalid timestamp: ").put(tsStr);
-        }
+        return tableWriter.newRow(timestampFunction.getTimestamp(null));
     }
 
     private TableWriter.Row getRowWithoutTimestamp(TableWriter tableWriter) {
@@ -162,10 +144,8 @@ public class InsertStatementImpl implements InsertStatement {
         }
 
         @Override
-        public TableWriter popWriter() {
-            TableWriter w = writer;
-            this.writer = null;
-            return w;
+        public TableWriter getWriter() {
+            return writer;
         }
 
         @Override

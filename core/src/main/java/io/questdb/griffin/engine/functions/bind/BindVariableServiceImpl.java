@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -608,8 +607,7 @@ public class BindVariableServiceImpl implements BindVariableService {
             } catch (NumericException ignore) {
             }
         }
-        // Parse as ISO with variable length.
-        return IntervalUtils.parseFloorPartialDate(value);
+        return Numbers.parseLong(value, 0, hi);
     }
 
     private static void reportError(Function function, int srcType, int index, @Nullable CharSequence name) throws SqlException {

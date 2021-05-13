@@ -24,19 +24,18 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -46,8 +45,8 @@ import org.junit.rules.TemporaryFolder;
 import java.io.IOException;
 
 public class TableBackupTest {
-    private static final StringSink sink1 = new StringSink();
-    private static final StringSink sink2 = new StringSink();
+    private static final StringSink sink = new StringSink();
+    private static final RecordCursorPrinter printer = new RecordCursorPrinter(sink);
     private static final int ERRNO_EIO = 5;
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
@@ -161,7 +160,9 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
             setFinalBackupPath();
-            assertTables(tableName);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
@@ -184,8 +185,13 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            assertTables("tb1");
-            assertTables("tb2");
+            String sourceSelectAll = selectAll("tb1", false);
+            String backupSelectAll = selectAll("tb1", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+
+            sourceSelectAll = selectAll("tb2", false);
+            backupSelectAll = selectAll("tb2", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
@@ -318,8 +324,13 @@ public class TableBackupTest {
 
             setFinalBackupPath();
 
-            assertTables("tb1");
-            assertTables("tb2");
+            String sourceSelectAll = selectAll("tb1", false);
+            String backupSelectAll = selectAll("tb1", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
+
+            sourceSelectAll = selectAll("tb2", false);
+            backupSelectAll = selectAll("tb2", true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
@@ -345,7 +356,9 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath(1);
-            assertTables(tableName);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
@@ -363,7 +376,9 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName + ";", mainSqlExecutionContext);
             setFinalBackupPath();
-            assertTables(tableName);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll);
         });
     }
 
@@ -381,10 +396,9 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
             setFinalBackupPath();
-            StringSink sink3 = new StringSink();
-            selectAll(tableName, false, sink1);
-            selectAll(tableName, true, sink3);
-            Assert.assertEquals(sink1, sink3);
+            String sourceSelectAll = selectAll(tableName, false);
+            String backupSelectAll1 = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll1);
 
             // @formatter:off
             mainCompiler.compile("insert into " + tableName +
@@ -395,15 +409,15 @@ public class TableBackupTest {
 
             mainCompiler.compile("backup table " + tableName, mainSqlExecutionContext);
 
-            selectAll(tableName, false, sink1);
+            sourceSelectAll = selectAll(tableName, false);
             setFinalBackupPath(1);
-            selectAll(tableName, true, sink2);
-            TestUtils.assertEquals(sink1, sink2);
+            String backupSelectAll2 = selectAll(tableName, true);
+            Assert.assertEquals(sourceSelectAll, backupSelectAll2);
 
             // Check previous backup is unaffected
             setFinalBackupPath();
-            selectAll(tableName, true, sink1);
-            TestUtils.assertEquals(sink3, sink1);
+            String backupSelectAllOriginal = selectAll(tableName, true);
+            Assert.assertEquals(backupSelectAll1, backupSelectAllOriginal);
         });
     }
 
@@ -420,7 +434,7 @@ public class TableBackupTest {
             // @formatter:on
 
             try (Path path = new Path()) {
-                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).slash$();
+                path.of(mainConfiguration.getBackupRoot()).concat("tmp").concat(tableName).put(Files.SEPARATOR).$();
                 int rc = FilesFacadeImpl.INSTANCE.mkdirs(path, mainConfiguration.getBackupMkDirMode());
                 Assert.assertEquals(0, rc);
             }
@@ -464,12 +478,22 @@ public class TableBackupTest {
                 Assert.assertEquals(0, mainEngine.getBusyWriterCount());
                 Assert.assertEquals(0, mainEngine.getBusyReaderCount());
             } finally {
-                mainEngine.clear();
+                mainEngine.releaseAllReaders();
+                mainEngine.releaseAllWriters();
             }
         });
     }
 
-    private void selectAll(String tableName, boolean backup, MutableCharSink sink) throws Exception {
+    private String selectAll(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        CompiledQuery compiledQuery = compiler.compile("select * from " + tableName, sqlExecutionContext);
+        try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            sink.clear();
+            printer.print(cursor, factory.getMetadata(), true);
+        }
+        return sink.toString();
+    }
+
+    private String selectAll(String tableName, boolean backup) throws Exception {
         CairoEngine engine = null;
         SqlCompiler compiler = null;
         SqlExecutionContext sqlExecutionContext;
@@ -488,12 +512,7 @@ public class TableBackupTest {
                 compiler = mainCompiler;
                 sqlExecutionContext = mainSqlExecutionContext;
             }
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select * from " + tableName,
-                    sink
-            );
+            return selectAll(compiler, sqlExecutionContext, tableName);
         } finally {
             if (backup) {
                 Misc.free(engine);
@@ -504,22 +523,16 @@ public class TableBackupTest {
 
     private void setFinalBackupPath(int n) {
         DateFormat timestampFormat = mainConfiguration.getBackupDirTimestampFormat();
-        finalBackupPath.of(mainConfiguration.getBackupRoot()).slash();
+        finalBackupPath.of(mainConfiguration.getBackupRoot()).put(Files.SEPARATOR);
         timestampFormat.format(mainConfiguration.getMicrosecondClock().getTicks(), mainConfiguration.getDefaultDateLocale(), null, finalBackupPath);
         if (n > 0) {
             finalBackupPath.put('.');
             finalBackupPath.put(n);
         }
-        finalBackupPath.slash$();
+        finalBackupPath.put(Files.SEPARATOR).$();
     }
 
     private void setFinalBackupPath() {
         setFinalBackupPath(0);
-    }
-
-    private void assertTables(String tb1) throws Exception {
-        selectAll(tb1, false, sink1);
-        selectAll(tb1, true, sink2);
-        TestUtils.assertEquals(sink1, sink2);
     }
 }

@@ -28,7 +28,7 @@ import java.util.Arrays;
 
 
 public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
-    public static final int NO_ENTRY_VALUE = -1;
+    private static final int NO_ENTRY_VALUE = -1;
     private final int noEntryValue;
     private final ObjList<CharSequence> list;
     private int[] values;
@@ -49,7 +49,6 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         clear();
     }
 
-    @Override
     public final void clear() {
         super.clear();
         list.clear();
@@ -64,7 +63,6 @@ public class CharSequenceIntHashMap extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
-    @Override
     public void removeAt(int index) {
         if (index < 0) {
             int index1 = -index - 1;

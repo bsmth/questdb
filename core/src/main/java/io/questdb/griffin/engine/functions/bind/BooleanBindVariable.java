@@ -45,9 +45,4 @@ public class BooleanBindVariable extends BooleanFunction implements ScalarFuncti
     public boolean getBool(Record rec) {
         return value;
     }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
 }

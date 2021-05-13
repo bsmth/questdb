@@ -151,11 +151,6 @@ public abstract class StrArrayFunction implements Function {
     }
 
     @Override
-    public final CharSequence getSymbolB(Record rec) {
-        return getStrB(rec);
-    }
-
-    @Override
     public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }

@@ -77,11 +77,9 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                     // got lock, allocate if needed
                     R r = e.readers[i];
                     if (r == null) {
+
                         try {
-                            LOG.info()
-                                    .$("open '").utf8(name)
-                                    .$("' [at=").$(e.index).$(':').$(i)
-                                    .$(']').$();
+                            LOG.info().$("open '").utf8(name).$("' [at=").$(e.index).$(':').$(i).$(']').$();
                             r = new R(this, e, i, name);
                         } catch (CairoException ex) {
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
@@ -91,7 +89,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         e.readers[i] = r;
                         notifyListener(thread, name, PoolListener.EV_CREATE, e.index, i);
                     } else {
-                        r.goActive();
+                        r.reload();
                         notifyListener(thread, name, PoolListener.EV_GET, e.index, i);
                     }
 
@@ -144,8 +142,11 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     }
 
     public boolean lock(CharSequence name) {
+
         Entry e = getEntry(name);
-        final long thread = Thread.currentThread().getId();
+
+        long thread = Thread.currentThread().getId();
+
         if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || Unsafe.cas(e, LOCK_OWNER, thread, thread)) {
             do {
                 for (int i = 0; i < ENTRY_SIZE; i++) {
@@ -178,7 +179,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return false;
         }
         notifyListener(thread, name, PoolListener.EV_LOCK_SUCCESS, -1, -1);
-        LOG.debug().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
+        LOG.info().$("locked [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
         return true;
     }
 
@@ -193,16 +194,13 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         if (e.lockOwner == thread) {
             entries.remove(name);
-            while (e != null) {
-                e = e.next;
-            }
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not the lock owner of ").put(name);
         }
 
         notifyListener(thread, name, PoolListener.EV_UNLOCKED, -1, -1);
-        LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
+        LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
     }
 
     private void checkClosed() {
@@ -216,6 +214,17 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
     protected void closePool() {
         super.closePool();
         LOG.info().$("closed").$();
+    }
+
+    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
+        R r = entry.readers[index];
+        if (r != null) {
+            r.goodby();
+            r.close();
+            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
+            notifyListener(thread, r.getTableName(), ev, entry.index, index);
+            entry.readers[index] = null;
+        }
     }
 
     @Override
@@ -250,7 +259,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
                         }
                     }
                 }
-                // this does not release the next
                 e = e.next;
             } while (e != null);
         }
@@ -261,17 +269,6 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
             return removed;
         } else {
             return casFailures == 0;
-        }
-    }
-
-    private void closeReader(long thread, Entry entry, int index, short ev, int reason) {
-        R r = entry.readers[index];
-        if (r != null) {
-            r.goodby();
-            r.close();
-            LOG.info().$("closed '").$(r.getTableName()).$("' [at=").$(entry.index).$(':').$(index).$(", reason=").$(PoolConstants.closeReasonText(reason)).$(']').$();
-            notifyListener(thread, r.getTableName(), ev, entry.index, index);
-            entry.readers[index] = null;
         }
     }
 
@@ -334,7 +331,7 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
         final int index;
         volatile long lockOwner = -1L;
         @SuppressWarnings("unused")
-        int nextStatus = 0;
+        long nextStatus = 0;
         volatile Entry next;
 
         public Entry(int index, long currentMicros) {
@@ -358,13 +355,10 @@ public class ReaderPool extends AbstractPool implements ResourcePool<TableReader
 
         @Override
         public void close() {
-            if (isOpen()) {
-                goPassive();
-                if (pool != null && entry != null && pool.returnToPool(this)) {
-                    return;
-                }
-                super.close();
+            if (pool != null && entry != null && pool.returnToPool(this)) {
+                return;
             }
+            super.close();
         }
 
         private void goodby() {

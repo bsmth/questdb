@@ -24,9 +24,12 @@
 
 package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -56,10 +59,13 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             String expected = "instrument\tsum\n" +
                     "CZ\t2886736\n";
 
-            assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'",
-                    expected
-            );
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'CZ' and side = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
         });
     }
 
@@ -82,10 +88,13 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             String expected = "instrument\tsum\n" +
                     "ML\t563832\n";
 
-            assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()",
-                    expected
-            );
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and side = rnd_char()", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
         });
     }
 
@@ -105,10 +114,13 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
             String expected = "instrument\tsum\n" +
                     "ML\t2617153\n";
 
-            assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'",
-                    expected
-            );
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'ML' and rnd_symbol('A', 'B', 'C') = 'B'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
         });
     }
 
@@ -129,10 +141,13 @@ public class EqStrCharFunctionTest extends AbstractGriffinTest {
 
             String expected = "instrument\tsum\n";
 
-            assertSql(
-                    "select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'",
-                    expected
-            );
+            try (RecordCursorFactory factory = compiler.compile("select instrument, sum(price) from tanc2  where instrument = 'KK' and side = 'C'", sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    sink.clear();
+                    printer.print(cursor, factory.getMetadata(), true);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
         });
     }
 }

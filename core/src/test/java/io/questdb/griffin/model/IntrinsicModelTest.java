@@ -90,41 +90,6 @@ public class IntrinsicModelTest {
         assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
     }
 
-    @Test(expected = NumericException.class)
-    public void testDateCeilFails() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000-1");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateCeilFailsOnTzSign() throws NumericException {
-        assertDateCeil("", "2015-01-01T00:00:00.000000≠10");
-    }
-
-    @Test
-    public void testDateCeilMicroWithTzHrs() throws NumericException {
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T08:22:44.556011-01");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28 08:22:44.556011-01");
-    }
-
-    @Test
-    public void testDateCeilMicroWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+01:22");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28T06:00:44.556011+0122");
-        assertDateCeil("2015-02-28T07:22:44.556012Z", "2015-02-28 06:00:44.556011+0122");
-    }
-
-    @Test
-    public void testDateCeilMilsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+01:00");
-        assertDateCeil("2015-02-28T07:00:44.557000Z", "2015-02-28T06:00:44.556+0100");
-    }
-
-    @Test
-    public void testDateCeilSecsWithTzHrsMins() throws NumericException {
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+01:00");
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28T06:00:44+0100");
-        assertDateCeil("2015-02-28T07:00:45.000000Z", "2015-02-28 06:00:44+0100");
-    }
     //////////////////////////////
 
     @Test
@@ -155,67 +120,26 @@ public class IntrinsicModelTest {
     @Test
     public void testDateFloorYYYYMMDDH() throws NumericException {
         assertDateFloor("2015-02-28T07:00:00.000000Z", "2015-02-28T07");
-        assertDateFloor("2015-02-28T07:00:00.000000Z", "2015-02-28 07");
     }
 
     @Test
     public void testDateFloorYYYYMMDDHm() throws NumericException {
         assertDateFloor("2015-02-28T07:21:00.000000Z", "2015-02-28T07:21");
-        assertDateFloor("2015-02-28T07:21:00.000000Z", "2015-02-28 07:21");
     }
 
     @Test
     public void testDateFloorYYYYMMDDHms() throws NumericException {
         assertDateFloor("2015-02-28T07:21:44.000000Z", "2015-02-28T07:21:44");
-        assertDateFloor("2015-02-28T07:21:44.000000Z", "2015-02-28 07:21:44");
     }
 
     @Test
     public void testDateFloorYYYYMMDDHmsS() throws NumericException {
         assertDateFloor("2015-02-28T07:21:44.556000Z", "2015-02-28T07:21:44.556");
-        assertDateFloor("2015-02-28T07:21:44.556000Z", "2015-02-28 07:21:44.556");
     }
 
     @Test
     public void testDateFloorYYYYMMDDHmsSU() throws NumericException {
         assertDateFloor("2015-02-28T07:21:44.556011Z", "2015-02-28T07:21:44.556011");
-        assertDateFloor("2015-02-28T07:21:44.556011Z", "2015-02-28 07:21:44.556011");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateFloorFails() throws NumericException {
-        assertDateFloor("", "2015-01-01T00:00:00.000000-1");
-    }
-
-    @Test(expected = NumericException.class)
-    public void testDateFloorFailsOnTzSign() throws NumericException {
-        assertDateFloor("", "2015-01-01T00:00:00.000000≠10");
-    }
-
-    @Test
-    public void testDateFloorMicroWithTzHrs() throws NumericException {
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T08:22:44.556011-01");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28 08:22:44.556011-01");
-    }
-
-    @Test
-    public void testDateFloorMicroWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+01:22");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28T06:00:44.556011+0122");
-        assertDateFloor("2015-02-28T07:22:44.556011Z", "2015-02-28 06:00:44.556011+0122");
-    }
-
-    @Test
-    public void testDateFloorMillsWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-00:30");
-        assertDateFloor("2015-02-28T05:30:44.555000Z", "2015-02-28T06:00:44.555-0030");
-    }
-
-    @Test
-    public void testDateFloorSecsWithTzHrsMins() throws NumericException {
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+01:00");
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28T06:00:44+0100");
-        assertDateFloor("2015-02-28T07:00:44.000000Z", "2015-02-28 06:00:44+0100");
     }
 
     @Test
@@ -295,9 +219,8 @@ public class IntrinsicModelTest {
     public void testInvert() throws SqlException {
         final String intervalStr = "2018-01-10T10:30:00.000Z;30m;2d;2";
         LongList out = new LongList();
-        IntervalUtils.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(out);
-        IntervalUtils.invert(out);
+        IntrinsicModel.parseIntervalEx(intervalStr, 0, intervalStr.length(), 0, out);
+        IntrinsicModel.invert(out);
         TestUtils.assertEquals("[{lo=, hi=2018-01-10T10:29:59.999999Z},{lo=2018-01-10T11:00:00.000001Z, hi=2018-01-12T10:29:59.999999Z},{lo=2018-01-12T11:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]",
                 intervalToString(out));
     }
@@ -425,36 +348,32 @@ public class IntrinsicModelTest {
 
     private static void assertShortInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
-        IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        IntervalUtils.applyLastEncodedIntervalEx(out);
+        IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertDateCeil(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntervalUtils.parseCCPartialDate(value);
+        long t = IntrinsicModel.parseCCPartialDate(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void assertDateFloor(String expected, String value) throws NumericException {
         sink.clear();
-        long t = IntervalUtils.parseFloorPartialDate(value);
+        long t = IntrinsicModel.parseFloorPartialDate(value);
         TimestampFormatUtils.appendDateTimeUSec(sink, t);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void assertIntersect(String expected) {
-        out.add(a);
-        out.add(b);
-        IntervalUtils.intersectInplace(out, a.size());
+        IntrinsicModel.intersect(a, b, out);
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 
     private void assertIntervalError(String interval) {
         try {
-            IntervalUtils.parseIntervalEx(interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-            IntervalUtils.applyLastEncodedIntervalEx(out);
+            IntrinsicModel.parseIntervalEx(interval, 0, interval.length(), 0, out);
             Assert.fail();
         } catch (SqlException ignore) {
         }

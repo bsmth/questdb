@@ -24,16 +24,8 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Sinkable;
-import io.questdb.std.str.CharSink;
+import io.questdb.cairo.CairoSecurityContext;
 
-import java.io.Closeable;
-
-public interface DataFrameCursorFactory extends Sinkable, Closeable {
-    DataFrameCursor getCursor(SqlExecutionContext executionContext);
-
-    default void toSink(CharSink sink) {
-        throw new UnsupportedOperationException();
-    }
+public interface DataFrameCursorFactory {
+    DataFrameCursor getCursor(CairoSecurityContext securityContext);
 }

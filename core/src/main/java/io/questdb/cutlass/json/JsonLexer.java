@@ -301,7 +301,7 @@ public class JsonLexer implements Mutable, Closeable {
         }
 
         if (len > 0) {
-            Vect.memcpy(lo, cache + cacheSize, len);
+            Unsafe.getUnsafe().copyMemory(lo, cache + cacheSize, len);
             cacheSize += len;
         }
     }
@@ -312,7 +312,7 @@ public class JsonLexer implements Mutable, Closeable {
         }
         long ptr = Unsafe.malloc(n);
         if (cacheCapacity > 0) {
-            Vect.memcpy(cache, ptr, cacheSize);
+            Unsafe.getUnsafe().copyMemory(cache, ptr, cacheSize);
             Unsafe.free(cache, cacheCapacity);
         }
         cacheCapacity = n;

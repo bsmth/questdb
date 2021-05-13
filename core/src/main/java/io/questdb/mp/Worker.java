@@ -34,6 +34,8 @@ import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
     private final static long RUNNING_OFFSET = Unsafe.getFieldOffset(Worker.class, "running");
+    private static final long YIELD_THRESHOLD = 10L;
+    private static final long SLEEP_THRESHOLD = 10000L;
     private final static AtomicInteger COUNTER = new AtomicInteger();
     private final ObjHashSet<? extends Job> jobs;
     private final SOCountDownLatch haltLatch;
@@ -44,8 +46,6 @@ public class Worker extends Thread {
     private final int workerId;
     private volatile int running = 0;
     private volatile int fence;
-    private final long yieldThreshold;
-    private final long sleepThreshold;
 
     public Worker(
             final ObjHashSet<? extends Job> jobs,
@@ -54,21 +54,16 @@ public class Worker extends Thread {
             final Log log,
             final WorkerCleaner cleaner,
             final boolean haltOnError,
-            final int workerId,
-            String poolName,
-            long yieldThreshold,
-            long sleepThreshold
+            final int workerId
     ) {
         this.log = log;
         this.jobs = jobs;
         this.haltLatch = haltLatch;
-        this.setName("questdb-" + poolName + "-" + COUNTER.incrementAndGet());
+        this.setName("questdb-worker-" + COUNTER.incrementAndGet());
         this.affinity = affinity;
         this.cleaner = cleaner;
         this.haltOnError = haltOnError;
         this.workerId = workerId;
-        this.yieldThreshold = yieldThreshold;
-        this.sleepThreshold = sleepThreshold;
     }
 
     public int getWorkerId() {
@@ -127,14 +122,14 @@ public class Worker extends Thread {
 
                     if (uselessCounter < 0) {
                         // deal with overflow
-                        uselessCounter = sleepThreshold + 1;
+                        uselessCounter = SLEEP_THRESHOLD + 1;
                     }
 
-                    if (uselessCounter > yieldThreshold) {
+                    if (uselessCounter > YIELD_THRESHOLD) {
                         Thread.yield();
                     }
 
-                    if (uselessCounter > sleepThreshold) {
+                    if (uselessCounter > SLEEP_THRESHOLD) {
                         LockSupport.parkNanos(1000000);
                     }
                 }
@@ -152,14 +147,13 @@ public class Worker extends Thread {
     }
 
     private void onError(int i, Throwable e) throws Throwable {
-        // Log error even when halt on error is set
+        if (haltOnError) {
+            throw e;
+        }
         if (log != null) {
             log.error().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).$(']').$();
         } else {
             e.printStackTrace();
-        }
-        if (haltOnError) {
-            throw e;
         }
     }
 

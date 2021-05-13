@@ -30,7 +30,12 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -49,14 +54,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     private final BuildInformation buildInformation = new BuildInformationHolder();
 
-    private final long databaseIdLo;
-    private final long databaseIdHi;
-
     public DefaultCairoConfiguration(CharSequence root) {
         this.root = Chars.toString(root);
-        Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
-        this.databaseIdLo = rnd.nextLong();
-        this.databaseIdHi = rnd.nextLong();
     }
 
     @Override
@@ -212,11 +211,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isO3QuickSortEnabled() {
-        return false;
-    }
-
-    @Override
     public int getSqlCharacterStoreSequencePoolCapacity() {
         return 64;
     }
@@ -288,7 +282,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortLightValuePageSize() {
-        return 8 * Numbers.SIZE_1MB;
+        return Numbers.SIZE_1MB;
     }
 
     @Override
@@ -457,82 +451,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getTableBlockWriterQueueCapacity() {
+    public int getTableBlockWriterQueueSize() {
         return 4;
-    }
-
-    @Override
-    public int getColumnIndexerQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getVectorAggregateQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3CallbackQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PartitionQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3OpenColumnQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3CopyQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PartitionUpdateQueueCapacity() {
-        return 1024;
     }
 
     @Override
     public BuildInformation getBuildInformation() {
         return buildInformation;
-    }
-
-    @Override
-    public long getDatabaseIdHi() {
-        return databaseIdHi;
-    }
-
-    @Override
-    public long getDatabaseIdLo() {
-        return databaseIdLo;
-    }
-
-    @Override
-    public int getO3PurgeDiscoveryQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getO3PurgeQueueCapacity() {
-        return 1024;
-    }
-
-    @Override
-    public int getTxnScoreboardEntryCount() {
-        return 8192;
-    }
-
-    @Override
-    public int getO3MaxUncommittedRows() {
-        return 1000;
-    }
-
-    @Override
-    public long getO3CommitHysteresis() {
-        return 0;
     }
 }

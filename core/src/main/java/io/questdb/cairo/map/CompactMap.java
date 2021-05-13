@@ -27,8 +27,6 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.vm.VmUtils;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
@@ -160,7 +158,7 @@ public class CompactMap implements Map {
             this.cursor = new CompactMapCursor(record);
             nResizes = 0;
             this.maxResizes = maxResizes;
-        } catch (Throwable e) {
+        } catch (CairoException e) {
             Misc.free(this.entries);
             Misc.free(entrySlots);
             throw e;
@@ -467,7 +465,7 @@ public class CompactMap implements Map {
                 entries.putLong(currentEntrySize);
                 int len = value.length();
                 entries.putStr(currentEntryOffset + currentEntrySize, value, 0, len);
-                currentEntrySize += VmUtils.getStorageLength(len);
+                currentEntrySize += len * 2 + 4;
             }
         }
 
@@ -477,7 +475,7 @@ public class CompactMap implements Map {
             entries.putLong(currentEntrySize);
             int len = hi - lo;
             entries.putStr(currentEntryOffset + currentEntrySize, value, lo, len);
-            currentEntrySize += VmUtils.getStorageLength(len);
+            currentEntrySize += len * 2 + 4;
         }
 
         @Override

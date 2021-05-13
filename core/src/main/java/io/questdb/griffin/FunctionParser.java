@@ -235,10 +235,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             traverseAlgo.traverse(node, this);
             final Function function = stack.poll();
             if (function != null && function.isConstant() && (function instanceof ScalarFunction)) {
-                try {
+                try (function) {
                     return functionToConstant(function);
-                } finally {
-                    function.close();
                 }
             }
             return function;
@@ -351,10 +349,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
             FunctionFactory factory,
             @Transient ObjList<Function> args,
             int position,
-            CairoConfiguration configuration
+            CairoConfiguration configuration,
+            boolean isNegated,
+            boolean isFlipped
     ) throws SqlException {
         Function function;
         try {
+            if (factory instanceof AbstractBooleanFunctionFactory) {
+                ((AbstractBooleanFunctionFactory) factory).setNegated(isNegated);
+            }
+            if (isFlipped) {
+                Function tmp = args.getQuick(0);
+                args.setQuick(0, args.getQuick(1));
+                args.setQuick(1, tmp);
+            }
             function = factory.newInstance(args, position, configuration, sqlExecutionContext);
         } catch (SqlException e) {
             throw e;
@@ -447,6 +455,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
     private Function createFunction(ExpressionNode node, @Transient ObjList<Function> args) throws SqlException {
         final ObjList<FunctionFactoryDescriptor> overload = functionFactoryCache.getOverloadList(node.token);
+        boolean isNegated = functionFactoryCache.isNegated(node.token);
+        boolean isFlipped = functionFactoryCache.isFlipped(node.token);
         if (overload == null) {
             throw invalidFunction(node, args);
         }
@@ -502,7 +512,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
 
             if (argCount == 0 && sigArgCount == 0) {
                 // this is no-arg function, match right away
-                return checkAndCreateFunction(factory, args, node.position, configuration);
+                return checkAndCreateFunction(factory, args, node.position, configuration, isNegated, isFlipped);
             }
 
             // otherwise, is number of arguments the same?
@@ -654,7 +664,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor {
         }
 
         LOG.debug().$("call ").$(node).$(" -> ").$(candidate.getSignature()).$();
-        return checkAndCreateFunction(candidate, args, node.position, configuration);
+        return checkAndCreateFunction(candidate, args, node.position, configuration, isNegated, isFlipped);
     }
 
     private Function functionToConstant(Function function) {

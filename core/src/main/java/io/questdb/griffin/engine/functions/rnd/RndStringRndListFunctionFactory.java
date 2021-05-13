@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
+import io.questdb.cairo.ContiguousVirtualMemory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -94,13 +94,13 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * Long.BYTES);
             return strMem.getStr(o);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * Long.BYTES);
             return strMem.getStr2(o);
         }
 
@@ -142,13 +142,13 @@ public class RndStringRndListFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStr(Record rec) {
-            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * Long.BYTES);
             return strMem.getStr(o);
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * 8L);
+            long o = idxMem.getLong((rnd.nextPositiveInt() % count) * Long.BYTES);
             return strMem.getStr2(o);
         }
 

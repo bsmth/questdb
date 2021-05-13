@@ -24,9 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
-import io.questdb.cairo.vm.SinglePageMappedReadOnlyPageMemory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -69,7 +66,7 @@ public class MetadataMigration350 {
         typeMapping.extendAndSet(CHAR, ColumnType.CHAR);
     }
 
-    public static void convert(FilesFacade ff, Path path1, Path path2, AppendOnlyVirtualMemory appendMem, MappedReadOnlyMemory roMem) {
+    public static void convert(FilesFacade ff, Path path1, Path path2, AppendMemory appendMem, ReadOnlyMemory roMem) {
         final int plen = path1.length();
         path1.concat(TableUtils.META_FILE_NAME).$();
 
@@ -114,7 +111,7 @@ public class MetadataMigration350 {
         for (int i = 0; i < columnCount; i++) {
             CharSequence s = roMem.getStr(offset);
             appendMem.putStr(s);
-            offset += s.length() * 2L + 4;
+            offset += s.length() * 2 + 4;
         }
         roMem.close();
         appendMem.close();
@@ -142,8 +139,8 @@ public class MetadataMigration350 {
 
     public static void main(String[] args) {
         try (
-                final MappedReadOnlyMemory roMem = new SinglePageMappedReadOnlyPageMemory();
-                final AppendOnlyVirtualMemory appendMem = new AppendOnlyVirtualMemory();
+                final ReadOnlyMemory roMem = new ReadOnlyMemory();
+                final AppendMemory appendMem = new AppendMemory();
                 final Path path1 = new Path();
                 final Path path2 = new Path()
         ) {
@@ -160,7 +157,7 @@ public class MetadataMigration350 {
                     nativeLPSZ.of(name);
                     if (!Chars.equals(nativeLPSZ, '.') && !Chars.equals(nativeLPSZ, "..")) {
                         int plen = path1.length();
-                        path1.chop$().concat(nativeLPSZ);
+                        path1.chopZ().concat(nativeLPSZ);
                         path2.of(path1);
                         convert(ff, path1, path2, appendMem, roMem);
                         path1.trimTo(plen);

@@ -87,6 +87,11 @@ public class DefaultHttpContextConfiguration implements HttpContextConfiguration
     }
 
     @Override
+    public int getResponseHeaderBufferSize() {
+        return 1024;
+    }
+
+    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }

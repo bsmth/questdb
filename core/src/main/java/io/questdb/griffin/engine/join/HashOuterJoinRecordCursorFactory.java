@@ -104,7 +104,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractRecordCursorFactor
         RecordCursor slaveCursor = slaveFactory.getCursor(executionContext);
         try {
             buildMapOfSlaveRecords(slaveCursor, executionContext.getSqlExecutionInterruptor());
-        } catch (Throwable e) {
+        } catch (CairoException e) {
             slaveCursor.close();
             throw e;
         }

@@ -31,6 +31,4 @@ public interface SymbolTable {
     int VALUE_IS_NULL = Numbers.INT_NaN;
 
     CharSequence valueOf(int key);
-
-    CharSequence valueBOf(int key);
 }

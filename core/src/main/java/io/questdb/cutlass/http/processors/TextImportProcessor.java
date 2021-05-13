@@ -273,9 +273,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_SUFFIX:
                 socket.bookmark();
                 socket.put(']').put('}');
-                state.responseState = RESPONSE_COMPLETE;
-                socket.sendChunk(true);
-                break;
+                state.responseState = RESPONSE_DONE;
+                socket.sendChunk();
+                // fall through
             case RESPONSE_DONE:
                 state.responseState = RESPONSE_COMPLETE;
                 socket.done();
@@ -403,9 +403,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             case RESPONSE_SUFFIX:
                 socket.bookmark();
                 sep(socket);
-                state.responseState = RESPONSE_COMPLETE;
-                socket.sendChunk(true);
-                break;
+                state.responseState = RESPONSE_DONE;
+                socket.sendChunk();
+                // fall through
             case RESPONSE_DONE:
                 state.responseState = RESPONSE_COMPLETE;
                 socket.done();
@@ -439,7 +439,7 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             }
         } catch (NoSpaceLeftInResponseBufferException ignored) {
             if (socket.resetToBookmark()) {
-                socket.sendChunk(false);
+                socket.sendChunk();
             } else {
                 // what we have here is out unit of data, column value or query
                 // is larger that response content buffer
@@ -483,7 +483,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
             socket.sendHeader();
             socket.encodeUtf8(message);
         }
-        socket.sendChunk(true);
+        socket.sendChunk();
+        socket.done();
     }
 
     private void resumeError(TextImportProcessorState state, HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
@@ -492,7 +493,8 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
         } else {
             socket.encodeUtf8(state.errorMessage);
         }
-        socket.sendChunk(true);
+        socket.sendChunk();
+        socket.done();
         throw ServerDisconnectException.INSTANCE;
     }
 

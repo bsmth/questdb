@@ -164,7 +164,7 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
     }
 
     protected void accept(long timestamp) {
-        while (this.connectionCount.get() < activeConnectionLimit) {
+        while (true) {
             // this accept is greedy, rather than to rely on epoll(or similar) to
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
@@ -178,14 +178,18 @@ public abstract class AbstractIODispatcher<C extends IOContext> extends Synchron
                 return;
             }
 
-            if (nf.configureNonBlocking(fd) < 0) {
-                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            final int connectionCount = this.connectionCount.get();
+            if (connectionCount == activeConnectionLimit) {
+                LOG.error().$("connection limit exceeded [fd=").$(fd)
+                        .$(", connectionCount=").$(connectionCount)
+                        .$(", activeConnectionLimit=").$(activeConnectionLimit)
+                        .$(']').$();
                 nf.close(fd, LOG);
                 return;
             }
 
-            if (nf.setTcpNoDelay(fd, true) < 0) {
-                LOG.error().$("could not configure no delay [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
+            if (nf.configureNonBlocking(fd) < 0) {
+                LOG.error().$("could not configure non-blocking [fd=").$(fd).$(", errno=").$(nf.errno()).$(']').$();
                 nf.close(fd, LOG);
                 return;
             }

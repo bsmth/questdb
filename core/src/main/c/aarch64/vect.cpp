@@ -97,8 +97,4 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Vect_hasNull(JNIEnv *env, jclass 
     return hasNull_Vanilla((int32_t *) pInt, count);
 }
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
-    return 0.0;
-}
-
 }

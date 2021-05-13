@@ -91,7 +91,6 @@ public class Long256FunctionTest {
         function.getInt(null);
     }
 
-    @Test
     public void testGetLong() {
         Assert.assertEquals(Numbers.LONG_NaN, function.getLong(null));
     }

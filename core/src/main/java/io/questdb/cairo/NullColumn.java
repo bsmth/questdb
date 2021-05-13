@@ -24,41 +24,20 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.MappedReadOnlyMemory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 
-public class NullColumn implements MappedReadOnlyMemory {
+public class NullColumn implements ReadOnlyColumn {
 
     public static final NullColumn INSTANCE = new NullColumn();
 
     @Override
-    public void close() {
-    }
-
-    @Override
     public void of(FilesFacade ff, LPSZ name, long pageSize, long size) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long pageSize) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isDeleted() {
-        return true;
-    }
-
-    @Override
-    public long getFd() {
-        return -1;
-    }
-
-    @Override
-    public void growToFileSize() {
+    public void close() {
     }
 
     @Override
@@ -87,6 +66,11 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
+    public long getFd() {
+        return -1;
+    }
+
+    @Override
     public float getFloat(long offset) {
         return Float.NaN;
     }
@@ -99,21 +83,6 @@ public class NullColumn implements MappedReadOnlyMemory {
     @Override
     public long getLong(long offset) {
         return Numbers.LONG_NaN;
-    }
-
-    @Override
-    public long getPageAddress(int pageIndex) {
-        return 0;
-    }
-
-    @Override
-    public int getPageCount() {
-        return 0;
-    }
-
-    @Override
-    public long getPageSize(int pageIndex) {
-        return 0;
     }
 
     @Override
@@ -132,20 +101,6 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public Long256 getLong256A(long offset) {
-        return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
-    public void getLong256(long offset, CharSink sink) {
-    }
-
-    @Override
-    public Long256 getLong256B(long offset) {
-        return Long256Impl.NULL_LONG256;
-    }
-
-    @Override
     public char getChar(long offset) {
         return 0;
     }
@@ -160,7 +115,41 @@ public class NullColumn implements MappedReadOnlyMemory {
     }
 
     @Override
-    public long size() {
+    public long getGrownLength() {
+        return -1;
+    }
+
+    @Override
+    public void getLong256(long offset, CharSink sink) {
+    }
+
+    @Override
+    public Long256 getLong256A(long offset) {
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public Long256 getLong256B(long offset) {
+        return Long256Impl.NULL_LONG256;
+    }
+
+    @Override
+    public boolean isDeleted() {
+        return true;
+    }
+
+    @Override
+    public int getPageCount() {
+        return 0;
+    }
+
+    @Override
+    public long getPageSize(int pageIndex) {
+        return 0;
+    }
+
+    @Override
+    public long getPageAddress(int pageIndex) {
         return 0;
     }
 }

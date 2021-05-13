@@ -56,7 +56,7 @@ public class TimeZoneRulesMillis implements TimeZoneRules {
 
         if (savingsInstantTransition.length == 0) {
             ZoneOffset[] standardOffsets = (ZoneOffset[]) Unsafe.getUnsafe().getObject(rules, STANDARD_OFFSETS);
-            standardOffset = standardOffsets[0].getTotalSeconds() * 1000L;
+            standardOffset = standardOffsets[0].getTotalSeconds() * 1000;
         } else {
             standardOffset = Long.MIN_VALUE;
         }

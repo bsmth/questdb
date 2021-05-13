@@ -67,7 +67,7 @@ public class UnionRecordCursorFactory implements RecordCursorFactory {
             slaveCursor = slaveFactory.getCursor(executionContext);
             cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
+        } catch (CairoException ex) {
             Misc.free(masterCursor);
             Misc.free(slaveCursor);
             throw ex;

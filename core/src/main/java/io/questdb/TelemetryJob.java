@@ -85,7 +85,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             }
 
             try {
-                this.writer = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, tableName);
+                this.writer = new TableWriter(configuration, tableName);
             } catch (CairoException ex) {
                 LOG.error()
                         .$("could not open [table=`").utf8(tableName)
@@ -100,7 +100,7 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
             // modifying the table.
             // Once we have a permission system, we can use that instead.
             try {
-                this.writerConfig = engine.getWriter(AllowAllCairoSecurityContext.INSTANCE, configTableName);
+                this.writerConfig = new TableWriter(configuration, configTableName);
             } catch (CairoException ex) {
                 Misc.free(writer);
                 LOG.error()
@@ -186,10 +186,10 @@ public class TelemetryJob extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         if (enabled) {
-            if (subSeq.consumeAll(queue, myConsumer)) {
-                writer.commit();
-            }
+            subSeq.consumeAll(queue, myConsumer);
+            writer.commit();
         }
+
         return false;
     }
 

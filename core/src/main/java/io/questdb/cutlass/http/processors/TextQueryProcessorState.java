@@ -52,7 +52,6 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     int queryState = JsonQueryProcessorState.QUERY_PREFIX;
     int columnIndex;
     private boolean queryCacheable = false;
-    String fileName;
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;

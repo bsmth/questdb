@@ -27,8 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.AnalyticSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.ContiguousVirtualMemory;
-import io.questdb.cairo.vm.VmUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.Mutable;
@@ -237,7 +235,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
             mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
             recordOffset += 8;
             mem.putStr(varAppendOffset, value);
-            varAppendOffset += VmUtils.getStorageLength(value.length());
+            varAppendOffset += value.length() * 2 + 4;
         } else {
             putNull();
         }
@@ -249,7 +247,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         mem.putLong(rowToDataOffset(recordOffset), varAppendOffset);
         recordOffset += 8;
         mem.putStr(varAppendOffset, value, lo, len);
-        varAppendOffset += VmUtils.getStorageLength(len);
+        varAppendOffset += len * 2 + 4;
     }
 
     @Override
@@ -380,11 +378,6 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public CharSequence getSym(int col) {
             return symbolTableResolver.getSymbolTable(col).valueOf(getInt(col));
-        }
-
-        @Override
-        public CharSequence getSymB(int col) {
-            return symbolTableResolver.getSymbolTable(col).valueBOf(getInt(col));
         }
 
         private long fixedWithColumnOffset(int index) {

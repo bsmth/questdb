@@ -38,10 +38,6 @@ public interface CairoConfiguration {
 
     int getBindVariablePoolSize();
 
-    int getO3PurgeDiscoveryQueueCapacity();
-
-    int getO3PurgeQueueCapacity();
-
     int getSqlCopyBufferSize();
 
     int getCopyPoolCapacity();
@@ -203,39 +199,11 @@ public interface CairoConfiguration {
 
     long getAppendPageSize();
 
-    int getTableBlockWriterQueueCapacity();
-
-    int getColumnIndexerQueueCapacity();
-
-    int getVectorAggregateQueueCapacity();
-
-    int getO3CallbackQueueCapacity();
-
-    int getO3PartitionQueueCapacity();
-
-    int getO3OpenColumnQueueCapacity();
-
-    int getO3CopyQueueCapacity();
-
-    int getO3PartitionUpdateQueueCapacity();
+    int getTableBlockWriterQueueSize();
 
     BuildInformation getBuildInformation();
 
-    long getDatabaseIdHi();
-
-    long getDatabaseIdLo();
-
-    int getTxnScoreboardEntryCount();
-
-    int getO3MaxUncommittedRows();
-
-    /**
-     * Default commit hysteresis in microseconds for new tables. This value
-     * can be overridden with 'create table' statement.
-     *
-     * @return hysteresis in microseconds
-     */
-    long getO3CommitHysteresis();
-
-    boolean isO3QuickSortEnabled();
+    default boolean isOutOfOrderEnabled() {
+        return false;
+    }
 }

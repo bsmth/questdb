@@ -55,14 +55,6 @@ public interface RecordSinkSPI {
 
     void putStr(CharSequence value, int lo, int hi);
 
-    default void putStrLowerCase(CharSequence value) {
-        throw new UnsupportedOperationException();
-    }
-
-    default void putStrLowerCase(CharSequence value, int lo, int hi) {
-        throw new UnsupportedOperationException();
-    }
-
     void putRecord(Record value);
 
     void putTimestamp(long value);

@@ -57,7 +57,7 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(expectedPosition, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMsg);
+            TestUtils.assertContains(e.getMessage(), expectedMsg);
         }
     }
 
@@ -68,25 +68,15 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         return callCustomised(false, true, args);
     }
 
-    protected Invocation callBySignature(String signature, Object... args) throws SqlException {
-        return callCustomised(signature, false, true, args);
-    }
-
     protected Invocation callCustomised(boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
-        return callCustomised(null, forceConstant, argTypeFromSig, args);
-    }
-
-    private Invocation callCustomised(String signature, boolean forceConstant, boolean argTypeFromSig, Object... args) throws SqlException {
-        setUp();
+        setUp2();
         toShortRefs = 0;
         toByteRefs = 0;
         toTimestampRefs = 0;
         toDateRefs = 0;
 
         final FunctionFactory functionFactory = getFactory0();
-        if (signature == null) {
-            signature = functionFactory.getSignature();
-        }
+        final String signature = functionFactory.getSignature();
 
         // validate signature first
         final int pos = FunctionFactoryDescriptor.validateSignatureAndGetNameSeparator(signature);
@@ -473,6 +463,14 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
             closeFunctions();
         }
 
+        public Function getFunction1() {
+            return function1;
+        }
+
+        public Function getFunction2() {
+            return function2;
+        }
+
         public Record getRecord() {
             return record;
         }
@@ -595,11 +593,6 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
 
         @Override
         public CharSequence getSym(int col) {
-            return (CharSequence) args[col];
-        }
-
-        @Override
-        public CharSequence getSymB(int col) {
             return (CharSequence) args[col];
         }
     }

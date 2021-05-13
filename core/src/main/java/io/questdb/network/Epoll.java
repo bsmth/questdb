@@ -46,7 +46,9 @@ public final class Epoll implements Closeable {
         this.events = _rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity);
         // todo: this can be unsuccessful
         this.epollFd = epf.epollCreate();
-        Files.bumpFileCount(this.epollFd);
+        if (this.epollFd != -1) {
+            Files.bumpFileCount();
+        }
     }
 
     @Override
@@ -87,6 +89,6 @@ public final class Epoll implements Closeable {
     }
 
     public void setOffset(int offset) {
-        this._rPtr = this.events + offset;
+        this._rPtr = this.events + (long) offset;
     }
 }

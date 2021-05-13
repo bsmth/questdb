@@ -128,7 +128,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 try {
                     state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    header(context.getChunkedResponseSocket(), state);
+                    header(context.getChunkedResponseSocket());
                     resumeSend(context);
                 } catch (CairoException e) {
                     state.setQueryCacheable(e.isCacheable());
@@ -137,7 +137,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     internalError(context.getChunkedResponseSocket(), e, state);
                 }
             } else {
-                header(context.getChunkedResponseSocket(), state);
+                header(context.getChunkedResponseSocket());
                 sendConfirmation(context.getChunkedResponseSocket());
                 readyForNextRequest(context);
             }
@@ -264,7 +264,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 }
             } catch (NoSpaceLeftInResponseBufferException ignored) {
                 if (socket.resetToBookmark()) {
-                    socket.sendChunk(false);
+                    socket.sendChunk();
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
@@ -302,14 +302,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         return LOG.error().$('[').$(state.getFd()).$("] ");
     }
 
-    protected void header(HttpChunkedResponseSocket socket, TextQueryProcessorState state) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    protected void header(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.status(200, "text/csv; charset=utf-8");
-        if (state.fileName != null && state.fileName.length() > 0) {
-            socket.headers().put("Content-Disposition: attachment; filename=\"").put(state.fileName).put(".csv\"").put(Misc.EOL);
-        } else {
-            socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
-        }
-
+        socket.headers().put("Content-Disposition: attachment; filename=\"questdb-query-").put(clock.getTicks()).put(".csv\"").put(Misc.EOL);
         socket.headers().setKeepAlive(configuration.getKeepAliveHeader());
         socket.sendHeader();
     }
@@ -324,7 +319,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         error(state).$("Server error executing query ").utf8(state.query).$(e).$();
-        sendException(socket, 0, e.getMessage(), state);
+        sendException(socket, 0, e.getMessage(), state.query);
     }
 
     private boolean parseUrl(
@@ -336,7 +331,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectByteCharSequence query = request.getUrlParam("query");
         if (query == null || query.length() == 0) {
             info(state).$("Empty query request received. Sending empty reply.").$();
-            sendException(socket, 0, "No query text", state);
+            sendException(socket, 0, "No query text", state.query);
             return false;
         }
 
@@ -377,13 +372,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             TextUtil.utf8Decode(query.getLo(), query.getHi(), state.query);
         } catch (Utf8Exception e) {
             info(state).$("Bad UTF8 encoding").$();
-            sendException(socket, 0, "Bad UTF8 encoding in query text", state);
+            sendException(socket, 0, "Bad UTF8 encoding in query text", state.query);
             return false;
-        }
-        CharSequence fileName = request.getUrlParam("filename");
-        state.fileName = null;
-        if (fileName != null && fileName.length() > 0) {
-            state.fileName = fileName.toString();
         }
         state.skip = skip;
         state.count = 0L;
@@ -464,7 +454,8 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private void sendConfirmation(HttpChunkedResponseSocket socket) throws PeerDisconnectedException, PeerIsSlowToReadException {
         socket.put('{').putQuoted("ddl").put(':').putQuoted("OK").put('}');
-        socket.sendChunk(true);
+        socket.sendChunk();
+        socket.done();
     }
 
     private void sendDone(
@@ -473,8 +464,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.count > -1) {
             state.count = -1;
-            socket.sendChunk(true);
-            return;
+            socket.sendChunk();
         }
         socket.done();
     }
@@ -483,10 +473,10 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
             HttpChunkedResponseSocket socket,
             int position,
             CharSequence message,
-            TextQueryProcessorState state
+            CharSequence query
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        header(socket, state);
-        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, state.query);
+        header(socket);
+        JsonQueryProcessorState.prepareExceptionJson(socket, position, message, query);
     }
 
     private void syntaxError(
@@ -499,6 +489,6 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 .$("`, at=").$(sqlException.getPosition())
                 .$(", message=`").$(sqlException.getFlyweightMessage()).$('`')
                 .$(']').$();
-        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state);
+        sendException(socket, sqlException.getPosition(), sqlException.getFlyweightMessage(), state.query);
     }
 }

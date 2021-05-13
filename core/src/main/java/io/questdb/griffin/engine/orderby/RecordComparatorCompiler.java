@@ -292,7 +292,6 @@ public class RecordComparatorCompiler {
                 default:
                     // SYMBOL
                     getterNameA = "getSym";
-                    getterNameB = "getSymB";
                     fieldType = "Ljava/lang/CharSequence;";
                     comparatorClass = Chars.class;
                     comparatorDesc = "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)I";

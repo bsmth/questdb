@@ -80,7 +80,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory implements RecordCursorFac
         }
 
         final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
-        final Sequence pubSeq = bus.getVectorAggregatePubSeq();
+        final Sequence pubSeq = bus.getVectorAggregatePubSequence();
 
         this.entryPool.clear();
         this.activeEntries.clear();

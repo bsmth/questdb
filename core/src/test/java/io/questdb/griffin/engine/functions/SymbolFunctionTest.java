@@ -43,22 +43,12 @@ public class SymbolFunctionTest {
         }
 
         @Override
-        public CharSequence getSymbolB(Record rec) {
-            return "XYZ";
-        }
-
-        @Override
         public boolean isSymbolTableStatic() {
             return false;
         }
 
         @Override
         public CharSequence valueOf(int symbolKey) {
-            return "XYZ";
-        }
-
-        @Override
-        public CharSequence valueBOf(int key) {
             return "XYZ";
         }
     };
@@ -133,9 +123,8 @@ public class SymbolFunctionTest {
         Assert.assertEquals("XYZ", function.getStrB(null));
     }
 
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrLen() {
-        function.getStrLen(null);
+        Assert.assertEquals(3, function.getStrLen(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)

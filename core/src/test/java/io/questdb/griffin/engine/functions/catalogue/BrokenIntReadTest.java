@@ -25,12 +25,34 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import org.junit.Test;
 
 public class BrokenIntReadTest extends AbstractGriffinTest {
+
+
+    @Test
+    public void testFailToReadInt_TableIdOfFirstTable() throws Exception {
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
+
+        testFailOnRead(1, expected);
+    }
+
 
     @Test
     public void testFailToReadInt_ColumnCountOfFirstTable() throws Exception {
@@ -50,6 +72,24 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
     }
 
     @Test
+    public void testFailToReadInt_TableIdOfSecondTable() throws Exception {
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
+
+        testFailOnRead(3, expected);
+    }
+
+
+    @Test
     public void testFailToReadInt_ColumnCountOfSecondTable() throws Exception {
         String expected = "adrelid\tadnum\tadbin\n" +
                 "2\t1\t\n" +
@@ -64,6 +104,23 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
                 "2\t5\t\n";
 
         testFailOnRead(4, expected);
+    }
+
+    @Test
+    public void testFailToReadInt_TableIdOfThirdTable() throws Exception {
+        String expected = "adrelid\tadnum\tadbin\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n" +
+                "2\t1\t\n" +
+                "2\t2\t\n" +
+                "2\t3\t\n" +
+                "2\t4\t\n" +
+                "2\t5\t\n";
+
+        testFailOnRead(5, expected);
     }
 
     @Test
@@ -83,55 +140,68 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         testFailOnRead(6, expected);
     }
 
-    @Test
-    public void testFailToReadInt_TableIdOfFirstTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+    private void testFailOnRead(int i, String expected) throws Exception {
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return new BrokenIntRead(i);
+            }
+        };
+        engine = new CairoEngine(configuration);
+        compiler = new SqlCompiler(engine);
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
 
-        testFailOnRead(1, expected);
+        createTables(configuration.getFilesFacade());
+
+        assertQuery(
+                expected,
+                "pg_catalog.pg_attrdef order by 1",
+                null,
+                null,
+                true,
+                false,
+                false
+        );
     }
 
-    @Test
-    public void testFailToReadInt_TableIdOfSecondTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+    private void testFailOnReadDescriptionFunc(int i, String expected) throws Exception {
 
-        testFailOnRead(3, expected);
-    }
 
-    @Test
-    public void testFailToReadInt_TableIdOfThirdTable() throws Exception {
-        String expected = "adrelid\tadnum\tadbin\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n" +
-                "2\t1\t\n" +
-                "2\t2\t\n" +
-                "2\t3\t\n" +
-                "2\t4\t\n" +
-                "2\t5\t\n";
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return new BrokenIntRead(i);
+            }
+        };
+        engine = new CairoEngine(configuration);
+        compiler = new SqlCompiler(engine);
+        sqlExecutionContext = new SqlExecutionContextImpl(
+                engine, 1)
+                .with(
+                        AllowAllCairoSecurityContext.INSTANCE,
+                        bindVariableService,
+                        null,
+                        -1,
+                        null);
 
-        testFailOnRead(5, expected);
+        createTables(configuration.getFilesFacade());
+
+        assertQuery(
+                expected,
+                "pg_catalog.pg_description;",
+                null,
+                null,
+                false,
+                false,
+                false
+        );
     }
 
     private void createTables(FilesFacade ff) {
@@ -179,25 +249,6 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         }
     }
 
-    private void testFailOnRead(int i, String expected) throws Exception {
-        ff = new BrokenIntRead(i);
-        assertMemoryLeak(ff, () -> {
-            createTables(ff);
-            printSqlResult(
-                    expected,
-                    "pg_catalog.pg_attrdef order by 1",
-                    null,
-                    null,
-                    null,
-                    true,
-                    false,
-                    false,
-                    false,
-                    null
-            );
-        });
-    }
-
     static class BrokenIntRead extends FilesFacadeImpl {
 
         private final int failOnCount;
@@ -208,18 +259,20 @@ public class BrokenIntReadTest extends AbstractGriffinTest {
         }
 
         @Override
-        public void findClose(long findPtr) {
-            callCount = 0;
-            super.findClose(findPtr);
-        }
-
-        @Override
         public long read(long fd, long buf, long len, long offset) {
-            callCount++;
+            if (fd > 18) {
+                callCount++;
+            }
             if (callCount == failOnCount) {
                 return -1;
             }
             return super.read(fd, buf, len, offset);
+        }
+
+        @Override
+        public void findClose(long findPtr) {
+            callCount = 0;
+            super.findClose(findPtr);
         }
     }
 }

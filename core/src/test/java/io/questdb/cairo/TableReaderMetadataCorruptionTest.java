@@ -24,7 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -167,11 +167,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(root).concat("x");
                 final int rootLen = path.length();
-                if (FilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
+                if (FilesFacadeImpl.INSTANCE.mkdirs(path.put(Files.SEPARATOR).$(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.instance(FilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
-                try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                try (AppendMemory mem = new AppendMemory()) {
 
                     mem.of(FilesFacadeImpl.INSTANCE, path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$(), pageSize);
 
@@ -196,7 +196,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path);
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), contains);
+                    TestUtils.assertContains(e.getMessage(), contains);
                 }
             }
         });
@@ -213,7 +213,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 long len = FilesFacadeImpl.INSTANCE.length(path);
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(FilesFacadeImpl.INSTANCE, path)) {
-                    try (AppendOnlyVirtualMemory mem = new AppendOnlyVirtualMemory()) {
+                    try (AppendMemory mem = new AppendMemory()) {
                         mem.of(FilesFacadeImpl.INSTANCE, path, FilesFacadeImpl.INSTANCE.getPageSize());
                         mem.putInt(columnCount);
                         mem.skip(len - 4);
@@ -222,7 +222,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                     try {
                         metadata.createTransitionIndex();
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "Incorrect columnCount");
+                        TestUtils.assertContains(e.getMessage(), "Incorrect columnCount");
                     }
                 }
             }

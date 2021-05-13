@@ -183,11 +183,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private long countRows() {
             long count = base.size();
-            if (count > -1L) {
+            if (count > -1) {
                 return count;
             }
-
-            count = 0L;
             while (base.hasNext()) {
                 count++;
             }

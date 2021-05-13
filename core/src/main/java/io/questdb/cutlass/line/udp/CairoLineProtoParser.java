@@ -24,39 +24,20 @@
 
 package io.questdb.cutlass.line.udp;
 
-import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
-import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
+import io.questdb.cairo.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.line.*;
+import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoSecurityContext;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableStructure;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cutlass.line.CachedCharSequence;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport;
-import io.questdb.cutlass.line.CairoLineProtoParserSupport.BadCastException;
-import io.questdb.cutlass.line.CharSequenceCache;
-import io.questdb.cutlass.line.LineProtoParser;
-import io.questdb.cutlass.line.LineProtoTimestampAdapter;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.Sinkable;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.str.Path;
+import static io.questdb.cairo.TableUtils.TABLE_DOES_NOT_EXIST;
+import static io.questdb.cairo.TableUtils.TABLE_EXISTS;
 
 public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final static Log LOG = LogFactory.getLog(CairoLineProtoParser.class);
@@ -75,7 +56,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     private final LongList columnNameType = new LongList();
     private final LongList columnIndexAndType = new LongList();
     private final LongList columnValues = new LongList();
-    private final AppendOnlyVirtualMemory appendMemory = new AppendOnlyVirtualMemory();
+    private final AppendMemory appendMemory = new AppendMemory();
     private final MicrosecondClock clock;
     private final FieldNameParser MY_NEW_FIELD_NAME = this::parseFieldNameNewTable;
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -207,6 +188,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , (int) columnNameType.getQuick(i * 2 + 1)
                         , i
                         , cache.get(columnValues.getQuick(i))
+                        , LOG
                 );
             }
             row.append();
@@ -230,6 +212,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                         , Numbers.decodeHighInt(value)
                         , Numbers.decodeLowInt(value)
                         , cache.get(columnValues.getQuick(i))
+                        , LOG
                 );
             }
             row.append();
@@ -362,44 +345,27 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
     }
 
     private void parseValue(CachedCharSequence value, int valueType, CharSequenceCache cache) {
-        assert valueType > -1;
-        if (columnType > -1) {
-            boolean valid;
-            switch (valueType) {
-                case ColumnType.LONG:
-                    valid = columnType == ColumnType.LONG || columnType == ColumnType.INT || columnType == ColumnType.SHORT || columnType == ColumnType.BYTE
-                            || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE;
-                    break;
-                case ColumnType.BOOLEAN:
-                    valid = columnType == ColumnType.BOOLEAN;
-                    break;
-                case ColumnType.STRING:
-                    valid = columnType == ColumnType.STRING;
-                    break;
-                case ColumnType.DOUBLE:
-                    valid = columnType == ColumnType.DOUBLE || columnType == ColumnType.FLOAT;
-                    break;
-                case ColumnType.SYMBOL:
-                    valid = columnType == ColumnType.SYMBOL;
-                    break;
-                case ColumnType.LONG256:
-                    valid = columnType == ColumnType.LONG256;
-                    break;
-                default:
-                    valid = false;
-            }
-            if (valid) {
-                columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, columnType));
-                columnValues.add(value.getCacheAddress());
-            } else {
-                LOG.error().$("mismatched column and value types [table=").$(writer.getTableName())
-                        .$(", column=").$(metadata.getColumnName(columnIndex))
-                        .$(", columnType=").$(ColumnType.nameOf(columnType))
-                        .$(", valueType=").$(ColumnType.nameOf(valueType))
-                        .$(']').$();
-                switchModeToSkipLine();
+        if (columnType == valueType) {
+            columnIndexAndType.add(Numbers.encodeLowHighInts(columnIndex, valueType));
+            columnValues.add(value.getCacheAddress());
+        } else {
+            possibleNewColumn(value, valueType, cache);
+        }
+    }
 
-            }
+    private void parseValueNewTable(CachedCharSequence value, int valueType) {
+        columnNameType.add(valueType);
+        columnValues.add(value.getCacheAddress());
+    }
+
+    private void possibleNewColumn(CachedCharSequence value, int valueType, CharSequenceCache cache) {
+        if (columnIndex > -1) {
+            LOG.error().$("mismatched column and value types [table=").$(writer.getName())
+                    .$(", column=").$(metadata.getColumnName(columnIndex))
+                    .$(", columnType=").$(ColumnType.nameOf(columnType))
+                    .$(", valueType=").$(ColumnType.nameOf(valueType))
+                    .$(']').$();
+            switchModeToSkipLine();
         } else {
             CharSequence colNameAsChars = cache.get(columnName);
             if (TableUtils.isValidColumnName(colNameAsChars)) {
@@ -407,17 +373,12 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
                 columnIndexAndType.add(Numbers.encodeLowHighInts(columnCount++, valueType));
                 columnValues.add(value.getCacheAddress());
             } else {
-                LOG.error().$("invalid column name [table=").$(writer.getTableName())
+                LOG.error().$("invalid column name [table=").$(writer.getName())
                         .$(", columnName=").$(colNameAsChars)
                         .$(']').$();
                 switchModeToSkipLine();
             }
         }
-    }
-
-    private void parseValueNewTable(CachedCharSequence value, int valueType) {
-        columnNameType.add(valueType);
-        columnValues.add(value.getCacheAddress());
     }
 
     private void prepareNewColumn(CachedCharSequence token) {
@@ -448,7 +409,7 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
             // add previous writer to commit list
             CacheEntry e = writerCache.valueAtQuick(cacheEntryIndex);
             if (e.writer != null) {
-                commitList.put(e.writer.getTableName(), e.writer);
+                commitList.put(e.writer.getName(), e.writer);
             }
         }
 
@@ -559,16 +520,6 @@ public class CairoLineProtoParser implements LineProtoParser, Closeable {
         @Override
         public int getTimestampIndex() {
             return timestampIndex;
-        }
-
-        @Override
-        public int getO3MaxUncommittedRows() {
-            return configuration.getO3MaxUncommittedRows();
-        }
-
-        @Override
-        public long getO3CommitHysteresisInMicros() {
-            return configuration.getO3CommitHysteresis();
         }
 
         TableStructureAdapter of(CharSequenceCache cache) {

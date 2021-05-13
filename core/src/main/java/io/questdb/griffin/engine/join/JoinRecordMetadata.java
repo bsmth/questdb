@@ -140,11 +140,11 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         final MapKey key = map.withKey();
         final int dot = Chars.indexOf(columnName, lo, '.');
         if (dot == -1) {
-            key.putStrLowerCase(null);
-            key.putStrLowerCase(columnName, lo, hi);
+            key.putStr(null);
+            key.putStr(columnName, lo, hi);
         } else {
-            key.putStrLowerCase(columnName, 0, dot);
-            key.putStrLowerCase(columnName, dot + 1, columnName.length());
+            key.putStr(columnName, 0, dot);
+            key.putStr(columnName, dot + 1, columnName.length());
         }
 
         MapValue value = key.findValue();
@@ -170,12 +170,12 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
         MapKey key = map.withKey();
 
         if (dot == -1) {
-            key.putStrLowerCase(tableAlias);
+            key.putStr(tableAlias);
         } else {
             assert tableAlias == null;
-            key.putStrLowerCase(columnName, 0, dot);
+            key.putStr(columnName, 0, dot);
         }
-        key.putStrLowerCase(columnName, dot + 1, columnName.length());
+        key.putStr(columnName, dot + 1, columnName.length());
 
         MapValue value = key.createValue();
         if (!value.isNew()) {
@@ -193,7 +193,7 @@ public class JoinRecordMetadata extends BaseRecordMetadata implements Closeable 
 
         key = map.withKey();
         key.putStr(null);
-        key.putStrLowerCase(columnName, dot + 1, columnName.length());
+        key.putStr(columnName, dot + 1, columnName.length());
 
         value = key.createValue();
         if (value.isNew()) {

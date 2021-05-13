@@ -56,11 +56,6 @@ public class MapSymbolColumn extends SymbolFunction {
     }
 
     @Override
-    public CharSequence getSymbolB(Record rec) {
-        return symbolTable.valueBOf(getInt(rec));
-    }
-
-    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTable = symbolTableSource.getSymbolTable(cursorColumnIndex);
         assert this.symbolTable != this;
@@ -70,11 +65,6 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
-    }
-
-    @Override
-    public CharSequence valueBOf(int symbolKey) {
-        return symbolTable.valueBOf(symbolKey);
     }
 
     @Override

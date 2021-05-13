@@ -45,9 +45,4 @@ class CharBindVariable extends CharFunction implements ScalarFunction, Mutable {
     public char getChar(Record rec) {
         return value;
     }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
 }

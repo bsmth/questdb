@@ -26,7 +26,6 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.PagedMappedReadWriteMemory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -75,7 +74,7 @@ public class TableReadFailTest extends AbstractCairoTest {
 
             try (Path path = new Path();
                  TableReader reader = new TableReader(configuration, "x");
-                 PagedMappedReadWriteMemory mem = new PagedMappedReadWriteMemory()) {
+                 ReadWriteMemory mem = new ReadWriteMemory()) {
 
                 final Rnd rnd = new Rnd();
                 final int N = 1000;
@@ -128,7 +127,7 @@ public class TableReadFailTest extends AbstractCairoTest {
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout");
+                    TestUtils.assertContains(e.getMessage(), "timeout");
                 }
 
                 // restore txn file to its former glory
@@ -175,15 +174,10 @@ public class TableReadFailTest extends AbstractCairoTest {
     @Test
     public void testTodoPresentConstructor() throws Exception {
         FilesFacade ff = new FilesFacadeImpl() {
-
             @Override
-            public long openRO(LPSZ name) {
-                if (Chars.endsWith(name, TableUtils.TODO_FILE_NAME)) {
-                    return -1;
-                }
-                return super.openRO(name);
+            public boolean exists(LPSZ path) {
+                return Chars.endsWith(path, TableUtils.TODO_FILE_NAME) || super.exists(path);
             }
-
         };
 
         assertConstructorFail(ff);

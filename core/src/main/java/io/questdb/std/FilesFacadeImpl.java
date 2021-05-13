@@ -45,11 +45,6 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int copy(LPSZ from, LPSZ to) {
-        return Files.copy(from, to);
-    }
-
-    @Override
     public int errno() {
         return Os.errno();
     }
@@ -105,11 +100,6 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public int msync(long addr, long len, boolean async) {
         return Files.msync(addr, len, async);
-    }
-
-    @Override
-    public int fsync(long fd) {
-        return Files.fsync(fd);
     }
 
     @Override
@@ -175,13 +165,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(long fd, long len, long offset, int flags) {
-        return Files.mmap(fd, len, offset, flags);
-    }
-
-    @Override
-    public long mmap(long fd, long len, long flags, int mode, long baseAddress) {
-        return Files.mmap(fd, len, flags, mode);
+    public long mmap(long fd, long len, long offset, int mode) {
+        return Files.mmap(fd, len, offset, mode);
     }
 
     @Override
@@ -225,7 +210,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int rmdir(Path name) {
+    public boolean rmdir(Path name) {
         return Files.rmdir(name);
     }
 
@@ -241,10 +226,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        if (Os.type != Os.WINDOWS) {
-            return Files.allocate(fd, size);
-        }
-        return true;
+        return Files.allocate(fd, size);
     }
 
     @Override

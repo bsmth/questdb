@@ -75,7 +75,6 @@ public class AvgDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setDouble(MapValue mapValue, double value) {
         mapValue.putDouble(valueIndex, value);
-        mapValue.putLong(valueIndex + 1, 1L);
     }
 
     @Override

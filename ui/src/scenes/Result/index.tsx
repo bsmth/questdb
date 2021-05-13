@@ -1,27 +1,3 @@
-/*******************************************************************************
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
- *
- *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- ******************************************************************************/
-
 import React, { useCallback, useEffect, useState } from "react"
 import { useSelector } from "react-redux"
 import styled from "styled-components"
@@ -41,9 +17,8 @@ import {
   Tooltip,
   useScreenSize,
 } from "components"
-import { BusEvent } from "consts"
 import { selectors } from "store"
-import { color } from "utils"
+import { BusEvent, color } from "utils"
 import * as QuestDB from "utils/questdb"
 
 const Menu = styled(PaneMenu)`
@@ -66,14 +41,14 @@ const Content = styled(PaneContent)`
 const ButtonWrapper = styled.div`
   display: flex;
   align-items: center;
-`
 
-const RowCount = styled(Text)`
-  margin-right: 2rem;
-`
+  ${/* sc-selector */ SecondaryButton}:not(:last-child) {
+    margin-right: 1rem;
+  }
 
-const RefreshButton = styled(SecondaryButton)`
-  margin-right: 1rem;
+  ${/* sc-selector */ Text} {
+    margin-right: 2rem;
+  }
 `
 
 const ToggleButton = styled(PrimaryToggleButton)`
@@ -146,9 +121,9 @@ const Result = () => {
 
         <ButtonWrapper>
           {count && !sm && (
-            <RowCount color="draculaForeground">
+            <Text color="draculaForeground">
               {`${count.toLocaleString()} row${count > 1 ? "s" : ""}`}
-            </RowCount>
+            </Text>
           )}
 
           {!sm && (
@@ -156,9 +131,9 @@ const Result = () => {
               delay={350}
               placement="bottom"
               trigger={
-                <RefreshButton onClick={handleRefreshClick}>
+                <SecondaryButton onClick={handleRefreshClick}>
                   <Refresh size="18px" />
-                </RefreshButton>
+                </SecondaryButton>
               }
             >
               <Tooltip>Refresh</Tooltip>

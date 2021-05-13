@@ -56,7 +56,7 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
 
     @Test
     public void testBusyTable() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             CountDownLatch allHaltLatch = new CountDownLatch(1);
             try {
                 createX();
@@ -76,7 +76,9 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         e.printStackTrace();
                         errorCounter.incrementAndGet();
                     } finally {
-                        engine.clear();
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+
                         allHaltLatch.countDown();
                     }
                 }).start();
@@ -93,7 +95,10 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "table 'x' could not be altered: [0]: table busy");
             }
 
-            Assert.assertTrue(allHaltLatch.await(2, TimeUnit.SECONDS));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            allHaltLatch.await(2, TimeUnit.SECONDS);
         });
     }
 
@@ -127,7 +132,8 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                         Assert.assertEquals(0, engine.getBusyWriterCount());
                         Assert.assertEquals(0, engine.getBusyReaderCount());
                     } finally {
-                        engine.clear();
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
                     }
                 }
         );
@@ -173,7 +179,9 @@ public class AlterTableDropColumnTest extends AbstractGriffinTest {
                 Assert.assertEquals(position, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), message);
             }
-            engine.clear();
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
         });
     }
 

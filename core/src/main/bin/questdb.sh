@@ -174,6 +174,7 @@ function start {
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelOldGC
+    --add-exports java.base/jdk.internal.math=io.questdb
     "
 
     JAVA_MAIN="io.questdb/io.questdb.ServerMain"

@@ -24,8 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.AppendOnlyVirtualMemory;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
 import io.questdb.std.str.Path;
 
 public interface ColumnIndexer {
@@ -37,13 +35,11 @@ public interface ColumnIndexer {
 
     void refreshSourceAndIndex(long loRow, long hiRow);
 
-    void index(ReadOnlyVirtualMemory mem, long loRow, long hiRow);
-
-    BitmapIndexWriter getWriter();
+    void index(VirtualMemory mem, long loRow, long hiRow);
 
     boolean isDistressed();
 
-    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendOnlyVirtualMemory columnMem, long columnTop);
+    void configureFollowerAndWriter(CairoConfiguration configuration, Path path, CharSequence name, AppendMemory columnMem, long columnTop);
 
     void configureWriter(CairoConfiguration configuration, Path path, CharSequence name, long columnTop);
 

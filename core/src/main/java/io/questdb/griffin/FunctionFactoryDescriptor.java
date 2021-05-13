@@ -25,8 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 
 public class FunctionFactoryDescriptor {
     private static final int ARRAY_MASK = 1 << 31;
@@ -82,15 +80,11 @@ public class FunctionFactoryDescriptor {
             if ((c | 32) == c) {
                 type |= (1 << 30);
             }
-            types[arrayIndex] |= (toUnsignedLong(type) << (32 - arrayValueOffset));
+            types[arrayIndex] |= (((long) type) << (32 - arrayValueOffset));
             typeIndex++;
         }
         this.argTypes = types;
         this.sigArgCount = typeCount;
-    }
-
-    private static long toUnsignedLong(int type) {
-        return ((long) type) & 0xffffffffL;
     }
 
     public static int getArgType(char c) {
@@ -200,31 +194,6 @@ public class FunctionFactoryDescriptor {
             throw SqlException.position(0).put("invalid function name character: ").put(sig);
         }
         return openBraceIndex;
-    }
-
-    public static String replaceSignatureNameAndSwapArgs(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put('(');
-        for (int i = signature.length() - 2; i > openBraceIndex; i--) {
-            char curr = signature.charAt(i);
-            if (curr == '[') {
-                signatureBuilder.put("[]");
-            } else if (curr != ']') {
-                signatureBuilder.put(curr);
-            }
-        }
-        signatureBuilder.put(')');
-        return signatureBuilder.toString();
-    }
-
-    public static String replaceSignatureName(String name, String signature) throws SqlException {
-        int openBraceIndex = validateSignatureAndGetNameSeparator(signature);
-        StringSink signatureBuilder = Misc.getThreadLocalBuilder();
-        signatureBuilder.put(name);
-        signatureBuilder.put(signature, openBraceIndex, signature.length());
-        return signatureBuilder.toString();
     }
 
     public int getArgTypeMask(int index) {

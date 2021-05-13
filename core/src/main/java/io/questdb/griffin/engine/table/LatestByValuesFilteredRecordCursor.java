@@ -31,7 +31,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByValuesFilteredRecordCursor extends AbstractDescendingRecordListCursor {
+class LatestByValuesFilteredRecordCursor extends AbstractRecordListCursor {
 
     private final int columnIndex;
     private final IntIntHashMap map;

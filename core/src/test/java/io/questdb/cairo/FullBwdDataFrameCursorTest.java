@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.DataFrame;
 import io.questdb.cairo.sql.DataFrameCursor;
 import io.questdb.cairo.sql.ReaderOutOfDateException;
@@ -58,7 +59,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 "1125579207\t-1849627000\t1975-01-01T16:00:00.000000Z\n" +
                 "-1532328444\t-1458132197\t1975-01-01T08:00:00.000000Z\n" +
                 "1530831067\t1904508147\t1975-01-01T00:00:00.000000Z\n";
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
 
             try (TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.INT).
@@ -83,39 +84,40 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                     timestamp += increment;
                 }
                 w.commit();
-                Assert.assertEquals(N, w.size());
 
-                FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
-                final TableReaderRecord record = new TableReaderRecord();
+                try (CairoEngine engine = new CairoEngine(configuration)) {
+                    FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(engine, "x", 0);
+                    final TableReaderRecord record = new TableReaderRecord();
 
-                try (final DataFrameCursor cursor = factory.getCursor(AllowAllSqlSecurityContext.INSTANCE)) {
-                    printCursor(record, cursor);
+                    try (final DataFrameCursor cursor = factory.getCursor(AllowAllCairoSecurityContext.INSTANCE)) {
+                        printCursor(record, cursor);
 
-                    TestUtils.assertEquals(expected, sink);
+                        TestUtils.assertEquals(expected, sink);
 
-                    // now add some more rows
+                        // now add some more rows
 
-                    timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
-                    for (int i = 0; i < N; i++) {
-                        TableWriter.Row row = w.newRow(timestamp);
-                        row.putInt(0, rnd.nextInt());
-                        row.putInt(1, rnd.nextInt());
-                        row.append();
-                        timestamp += increment;
+                        timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
+                        for (int i = 0; i < N; i++) {
+                            TableWriter.Row row = w.newRow(timestamp);
+                            row.putInt(0, rnd.nextInt());
+                            row.putInt(1, rnd.nextInt());
+                            row.append();
+                            timestamp += increment;
+                        }
+                        w.commit();
+
+                        Assert.assertTrue(cursor.reload());
+                        printCursor(record, cursor);
+                        TestUtils.assertEquals(expectedNext + expected, sink);
                     }
-                    w.commit();
 
-                    Assert.assertTrue(cursor.reload());
-                    printCursor(record, cursor);
-                    TestUtils.assertEquals(expectedNext + expected, sink);
-                }
+                    w.removeColumn("a");
 
-                w.removeColumn("a");
-
-                try {
-                    factory.getCursor(AllowAllSqlSecurityContext.INSTANCE);
-                    Assert.fail();
-                } catch (ReaderOutOfDateException ignored) {
+                    try {
+                        factory.getCursor(AllowAllCairoSecurityContext.INSTANCE);
+                        Assert.fail();
+                    } catch (ReaderOutOfDateException ignored) {
+                    }
                 }
             }
         });
@@ -130,7 +132,7 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
             record.jumpTo(frame.getPartitionIndex(), 0);
             for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {
                 record.setRecordIndex(index);
-                printer.print(record, cursor.getTableReader().getMetadata(), sink);
+                printer.print(record, cursor.getTableReader().getMetadata());
             }
         }
     }

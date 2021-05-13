@@ -59,12 +59,8 @@ public class DirectLongList implements Mutable, Closeable {
         if (limit - pos < thatCapacity) {
             extend(this.capacity + thatCapacity - (limit - pos));
         }
-        Vect.memcpy(that.start, this.pos, thatCapacity);
+        Unsafe.getUnsafe().copyMemory(that.start, this.pos, thatCapacity);
         this.pos += thatCapacity;
-    }
-
-    public void sortAsUnsigned() {
-        Vect.sortULongAscInPlace(address, size());
     }
 
     public long binarySearch(long v) {
@@ -152,7 +148,7 @@ public class DirectLongList implements Mutable, Closeable {
     }
 
     public void zero(long v) {
-        Vect.memset(start, pos - start, (int) v);
+        Unsafe.getUnsafe().setMemory(start, pos - start, (byte) v);
     }
 
     void ensureCapacity() {

@@ -62,7 +62,7 @@ public class TimestampAdapter extends AbstractTypeAdapter implements Mutable {
         row.putDate(column, format.parse(value, locale));
     }
 
-    public long getTimestamp(DirectByteCharSequence value) throws Exception {
+    public long getTimestamp(DirectByteCharSequence value) throws NumericException {
         return format.parse(value, locale);
     }
 

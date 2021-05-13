@@ -24,68 +24,47 @@
 
 package io.questdb.std;
 
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+
 import java.io.File;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
 
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-
 public final class Files {
 
     public static final Charset UTF_8;
     public static final long PAGE_SIZE;
+    //    public static final int DT_UNKNOWN = 0;
+//    public static final int DT_FIFO = 1;
+//    public static final int DT_CHR = 2;
     public static final int DT_DIR = 4;
+    //    public static final int DT_BLK = 6;
+//    public static final int DT_REG = 8;
+//    public static final int DT_LNK = 10;
+//    public static final int DT_SOCK = 12;
+//    public static final int DT_WHT = 14;
+
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final char SEPARATOR;
 
     static final AtomicLong OPEN_FILE_COUNT = new AtomicLong();
-    private static LongHashSet openFds;
+
+    static {
+        Os.init();
+        UTF_8 = StandardCharsets.UTF_8;
+        PAGE_SIZE = getPageSize();
+        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
+    }
 
     private Files() {
     } // Prevent construction.
 
-    public native static boolean allocate(long fd, long size);
-
     public native static long append(long fd, long address, long len);
 
-    public static synchronized boolean auditClose(long fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-        return true;
-    }
-
-    public static synchronized boolean auditOpen(long fd) {
-        if (null == openFds) {
-            openFds = new LongHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.contains(fd)) {
-            throw new IllegalStateException("fd " + fd + " is already open");
-        }
-        openFds.add(fd);
-        return true;
-    }
-
-    public static long bumpFileCount(long fd) {
-        if (fd != -1) {
-            //noinspection AssertWithSideEffects
-            assert auditOpen(fd);
-            OPEN_FILE_COUNT.incrementAndGet();
-        }
-        return fd;
-    }
-
     public static int close(long fd) {
-        assert auditClose(fd);
         int res = close0(fd);
         if (res == 0) {
             OPEN_FILE_COUNT.decrementAndGet();
@@ -93,17 +72,13 @@ public final class Files {
         return res;
     }
 
-    public static native int copy(long from, long to);
-
-    public static int copy(LPSZ from, LPSZ to) {
-        return copy(from.address(), to.address());
-    }
-
     public static native boolean exists(long fd);
 
     public static boolean exists(LPSZ lpsz) {
         return lpsz != null && exists0(lpsz.address());
     }
+
+    private static native boolean exists0(long lpsz);
 
     public native static void findClose(long findPtr);
 
@@ -116,8 +91,6 @@ public final class Files {
     public native static int findNext(long findPtr);
 
     public native static int findType(long findPtr);
-
-    public static native int fsync(long fd);
 
     public static long getLastModified(LPSZ lpsz) {
         return getLastModified(lpsz.address());
@@ -141,6 +114,8 @@ public final class Files {
 
     public static native int lock(long fd);
 
+    public static native int msync(long addr, long len, boolean async);
+
     public static int mkdir(LPSZ path, int mode) {
         return mkdir(path.address(), mode);
     }
@@ -163,7 +138,7 @@ public final class Files {
                             return r;
                         }
                     }
-                    pp.chop$();
+                    pp.chopZ();
                 }
                 pp.put(c);
             }
@@ -172,11 +147,7 @@ public final class Files {
     }
 
     public static long mmap(long fd, long len, long offset, int flags) {
-        return mmap(fd, len, offset, flags, 0);
-    }
-
-    public static long mmap(long fd, long len, long offset, int flags, long baseAddress) {
-        long address = mmap0(fd, len, offset, flags, baseAddress);
+        long address = mmap0(fd, len, offset, flags);
         if (address != -1) {
             Unsafe.recordMemAlloc(len);
         }
@@ -192,8 +163,6 @@ public final class Files {
         return address;
     }
 
-    public static native int msync(long addr, long len, boolean async);
-
     public static void munmap(long address, long len) {
         if (address != 0 && munmap0(address, len) != -1) {
             Unsafe.recordMemAlloc(-len);
@@ -201,15 +170,31 @@ public final class Files {
     }
 
     public static long openAppend(LPSZ lpsz) {
-        return bumpFileCount(openAppend(lpsz.address()));
+        long fd = openAppend(lpsz.address());
+        if (fd != -1) {
+            bumpFileCount();
+        }
+        return fd;
     }
 
     public static long openRO(LPSZ lpsz) {
-        return bumpFileCount(openRO(lpsz.address()));
+        long fd = openRO(lpsz.address());
+        if (fd != -1) {
+            bumpFileCount();
+        }
+        return fd;
     }
 
     public static long openRW(LPSZ lpsz) {
-        return bumpFileCount(openRW(lpsz.address()));
+        long fd = openRW(lpsz.address());
+        if (fd != -1) {
+            bumpFileCount();
+        }
+        return fd;
+    }
+
+    public static void bumpFileCount() {
+        OPEN_FILE_COUNT.incrementAndGet();
     }
 
     public native static long read(long fd, long address, long len, long offset);
@@ -222,10 +207,11 @@ public final class Files {
         return rename(oldName.address(), newName.address());
     }
 
-    public static int rmdir(Path path) {
+    public static boolean rmdir(Path path) {
         long p = findFirst(path.address());
         int len = path.length();
-        int errno = -1;
+        boolean clean = true;
+
         if (p > 0) {
             try {
                 do {
@@ -236,29 +222,30 @@ public final class Files {
                             continue;
                         }
 
-                        if ((errno = rmdir(path)) == 0) {
+                        if (rmdir(path)) {
                             continue;
                         }
 
+                        clean = false;
                     } else {
-                        if ((remove(path.address()))) {
+                        if (remove(path.address())) {
                             continue;
                         }
-                        errno = Os.errno();
+
+                        clean = false;
+
                     }
-                    return errno;
                 } while (findNext(p) > 0);
             } finally {
                 findClose(p);
             }
-            if (rmdir(path.trimTo(len).$().address())) {
-                return 0;
-            }
-            return Os.errno();
+            return rmdir(path.trimTo(len).$().address()) && clean;
         }
 
-        return errno;
+        return false;
     }
+
+    public native static long sequentialRead(long fd, long address, int len);
 
     public static boolean setLastModified(LPSZ lpsz, long millis) {
         return setLastModified(lpsz.address(), millis);
@@ -275,11 +262,11 @@ public final class Files {
 
     public native static boolean truncate(long fd, long size);
 
+    public native static boolean allocate(long fd, long size);
+
     public native static long write(long fd, long address, long len, long offset);
 
-    private native static int close0(long fd);
-
-    private static native boolean exists0(long lpsz);
+    native static int close0(long fd);
 
     private static boolean strcmp(long lpsz, CharSequence s) {
         int len = s.length();
@@ -296,7 +283,7 @@ public final class Files {
 
     private static native long mremap0(long fd, long address, long previousSize, long newSize, long offset, int flags);
 
-    private static native long mmap0(long fd, long len, long offset, int flags, long baseAddress);
+    private static native long mmap0(long fd, long len, long offset, int flags);
 
     private native static long getPageSize();
 
@@ -321,11 +308,4 @@ public final class Files {
     private native static boolean setLastModified(long lpszName, long millis);
 
     private static native boolean rename(long lpszOld, long lpszNew);
-
-    static {
-        Os.init();
-        UTF_8 = StandardCharsets.UTF_8;
-        PAGE_SIZE = getPageSize();
-        SEPARATOR = Os.type == Os.WINDOWS ? '\\' : '/';
-    }
 }

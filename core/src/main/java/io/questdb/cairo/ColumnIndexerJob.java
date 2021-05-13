@@ -25,17 +25,28 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
+import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.tasks.ColumnIndexerTask;
 
-public class ColumnIndexerJob extends AbstractQueueConsumerJob<ColumnIndexerTask> {
+public class ColumnIndexerJob implements Job {
+    private final RingQueue<ColumnIndexerTask> queue;
+    private final Sequence subSeq;
 
     public ColumnIndexerJob(MessageBus messageBus) {
-        super(messageBus.getIndexerQueue(), messageBus.getIndexerSubSequence());
+        this.queue = messageBus.getIndexerQueue();
+        this.subSeq = messageBus.getIndexerSubSequence();
     }
 
-    protected boolean doRun(int workerId, long cursor) {
+    @Override
+    public boolean run(int workerId) {
+        long cursor = subSeq.next();
+        return cursor > -1 && doIndex(cursor);
+    }
+
+    private boolean doIndex(long cursor) {
         final ColumnIndexerTask queueItem = queue.get(cursor);
         // copy values and release queue item
         final ColumnIndexer indexer = queueItem.indexer;

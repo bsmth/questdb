@@ -59,7 +59,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private long requestFd = -1;
     private SqlExecutionInterruptor interruptor = SqlExecutionInterruptor.NOP_INTERRUPTOR;
-    private long now;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int workerCount) {
         this(cairoEngine, workerCount, cairoEngine.getMessageBus());
@@ -167,16 +166,6 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 ordered,
                 baseSupportsRandomAccess
         );
-    }
-
-    @Override
-    public void initNow() {
-        now = cairoConfiguration.getMicrosecondClock().getTicks();
-    }
-
-    @Override
-    public long getNow() {
-        return now;
     }
 
     public SqlExecutionContextImpl with(

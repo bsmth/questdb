@@ -100,74 +100,89 @@ public class TruncateTest extends AbstractGriffinTest {
                 Assert.assertEquals(17, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "table name expected");
             } finally {
-                engine.clear();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
             }
         });
     }
 
     @Test
     public void testHappyPath() throws Exception {
-        assertMemoryLeak(
+        TestUtils.assertMemoryLeak(
                 () -> {
-                    createX();
+                    try {
+                        createX();
 
-                    assertQuery(
-                            "count\n" +
-                                    "10\n",
-                            "select count() from x",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "10\n",
+                                "select count() from x",
+                                null,
+                                false,
+                                true
+                        );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x", sqlExecutionContext).getType());
 
-                    assertQuery(
-                            "count\n" +
-                                    "0\n",
-                            "select count() from x",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "0\n",
+                                "select count() from x",
+                                null,
+                                false,
+                                true
+                        );
 
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
                 }
         );
     }
 
     @Test
     public void testHappyPathWithSemicolon() throws Exception {
-        assertMemoryLeak(
+        TestUtils.assertMemoryLeak(
                 () -> {
-                    createX();
+                    try {
+                        createX();
 
-                    assertQuery(
-                            "count\n" +
-                                    "10\n",
-                            "select count() from x",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "10\n",
+                                "select count() from x",
+                                null,
+                                false,
+                                true
+                        );
 
-                    Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x;", sqlExecutionContext).getType());
+                        Assert.assertEquals(TRUNCATE, compiler.compile("truncate table x;", sqlExecutionContext).getType());
 
-                    assertQuery(
-                            "count\n" +
-                                    "0\n",
-                            "select count() from x",
-                            null,
-                            false,
-                            true
-                    );
+                        assertQuery(
+                                "count\n" +
+                                        "0\n",
+                                "select count() from x",
+                                null,
+                                false,
+                                true
+                        );
 
+                        Assert.assertEquals(0, engine.getBusyWriterCount());
+                        Assert.assertEquals(0, engine.getBusyReaderCount());
+                    } finally {
+                        engine.releaseAllReaders();
+                        engine.releaseAllWriters();
+                    }
                 }
         );
     }
 
     @Test
     public void testTableBusy() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             createX();
             createY();
 
@@ -235,13 +250,16 @@ public class TruncateTest extends AbstractGriffinTest {
                     true
             );
 
-            Assert.assertTrue(haltLatch.await(1, TimeUnit.SECONDS));
+            haltLatch.await(1, TimeUnit.SECONDS);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
         });
     }
 
     @Test
     public void testTableDoesNotExist() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             createX();
             createY();
 
@@ -288,6 +306,9 @@ public class TruncateTest extends AbstractGriffinTest {
                     false,
                     true
             );
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
         });
     }
 
@@ -321,7 +342,7 @@ public class TruncateTest extends AbstractGriffinTest {
 
     @Test
     public void testTruncateOpenReader() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             createX(1_000_000);
 
             assertQuery(
@@ -344,13 +365,17 @@ public class TruncateTest extends AbstractGriffinTest {
                 }
             }
 
+
             compiler.compile("truncate table 'x'", sqlExecutionContext);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
         });
     }
 
     @Test
     public void testTwoTables() throws Exception {
-        assertMemoryLeak(() -> {
+        TestUtils.assertMemoryLeak(() -> {
             createX();
             createY();
 
@@ -391,6 +416,10 @@ public class TruncateTest extends AbstractGriffinTest {
                     false,
                     true
             );
+
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
         });
     }
 

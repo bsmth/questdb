@@ -39,6 +39,12 @@ import java.util.concurrent.locks.LockSupport;
 public class ConcurrentTest {
     private final static Log LOG = LogFactory.getLog(ConcurrentTest.class);
 
+    static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
+        long cursor = sequence.nextBully();
+        queue.get(cursor).value = Integer.MIN_VALUE;
+        sequence.done(cursor);
+    }
+
     @Test
     public void testFanOutChain() {
         LOG.info().$("testFanOutChain").$();
@@ -122,15 +128,16 @@ public class ConcurrentTest {
 
     @Test
     public void testOneToManyWaiting() throws Exception {
+        LOG.info().$("testOneToManyWaiting").$();
         int cycle = 1024;
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         SPSequence pubSeq = new SPSequence(cycle);
-        MCSequence subSeq = new MCSequence(cycle, new YieldingWaitStrategy());
+        MCSequence subSeq = new MCSequence(cycle, new BlockingWaitStrategy());
         pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(3);
-        SOCountDownLatch latch = new SOCountDownLatch(2);
+        CountDownLatch latch = new CountDownLatch(2);
 
         WaitingConsumer[] consumers = new WaitingConsumer[2];
         consumers[0] = new WaitingConsumer(size, subSeq, queue, barrier, latch);
@@ -216,7 +223,7 @@ public class ConcurrentTest {
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
-        Sequence subSeq = new SCSequence(new YieldingWaitStrategy());
+        Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
         pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
@@ -256,11 +263,11 @@ public class ConcurrentTest {
         int size = 1024 * cycle;
         RingQueue<Event> queue = new RingQueue<>(Event.FACTORY, cycle);
         Sequence pubSeq = new SPSequence(cycle);
-        Sequence subSeq = new SCSequence(new YieldingWaitStrategy());
+        Sequence subSeq = new SCSequence(new BlockingWaitStrategy());
         pubSeq.then(subSeq).then(pubSeq);
 
         CyclicBarrier barrier = new CyclicBarrier(2);
-        SOCountDownLatch latch = new SOCountDownLatch(1);
+        CountDownLatch latch = new CountDownLatch(1);
 
         WaitingConsumer consumer = new WaitingConsumer(size, subSeq, queue, barrier, latch);
         consumer.start();
@@ -388,12 +395,6 @@ public class ConcurrentTest {
         }
     }
 
-    static void publishEOE(RingQueue<Event> queue, Sequence sequence) {
-        long cursor = sequence.nextBully();
-        queue.get(cursor).value = Integer.MIN_VALUE;
-        sequence.done(cursor);
-    }
-
     private static class BusyConsumer extends Thread {
         private final Sequence sequence;
         private final int[] buf;
@@ -494,10 +495,10 @@ public class ConcurrentTest {
         private final int[] buf;
         private final RingQueue<Event> queue;
         private final CyclicBarrier barrier;
-        private final SOCountDownLatch latch;
+        private final CountDownLatch latch;
         private volatile int finalIndex = 0;
 
-        WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, SOCountDownLatch latch) {
+        WaitingConsumer(int cycle, Sequence sequence, RingQueue<Event> queue, CyclicBarrier barrier, CountDownLatch latch) {
             this.sequence = sequence;
             this.buf = new int[cycle];
             this.queue = queue;
@@ -522,10 +523,9 @@ public class ConcurrentTest {
                 }
 
                 finalIndex = p;
-            } catch (Throwable e) {
-                e.printStackTrace();
-            } finally {
                 latch.countDown();
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }
     }

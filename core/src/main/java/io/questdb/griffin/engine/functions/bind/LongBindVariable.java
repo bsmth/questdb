@@ -46,9 +46,4 @@ class LongBindVariable extends LongFunction implements ScalarFunction, Mutable {
     public long getLong(Record rec) {
         return value;
     }
-
-    @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
 }

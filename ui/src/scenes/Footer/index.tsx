@@ -21,7 +21,6 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-
 import React, { useCallback, useEffect, useState } from "react"
 import { useSelector } from "react-redux"
 import { CSSTransition } from "react-transition-group"
@@ -32,16 +31,6 @@ import { Link, Text, TransitionDuration } from "components"
 import { selectors } from "store"
 
 import GithubBanner from "../GithubBanner"
-
-const Wrapper = styled.div`
-  position: absolute;
-  display: flex;
-  height: 4rem;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding-left: 45px;
-`
 
 const Copyright = styled.div`
   display: flex;
@@ -82,7 +71,7 @@ const Footer = () => {
   const handleClick = useCallback(() => {
     setShowBanner(false)
   }, [])
-  const { githubBanner } = useSelector(selectors.console.getConfig)
+  const { githubBanner } = useSelector(selectors.console.getConfiguration)
 
   useEffect(() => {
     setTimeout(() => {
@@ -91,7 +80,7 @@ const Footer = () => {
   }, [])
 
   return (
-    <Wrapper id="footer">
+    <>
       <GithubBannerTransition />
       <Copyright>
         <Text color="draculaForeground">
@@ -117,7 +106,7 @@ const Footer = () => {
       >
         <GithubBanner onClick={handleClick} />
       </CSSTransition>
-    </Wrapper>
+    </>
   )
 }
 

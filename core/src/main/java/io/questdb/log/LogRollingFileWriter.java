@@ -226,7 +226,7 @@ public class LogRollingFileWriter extends SynchronizedJob implements Closeable, 
                 flush();
             }
 
-            Vect.memcpy(sink.getAddress(), _wptr, l);
+            Unsafe.getUnsafe().copyMemory(sink.getAddress(), _wptr, l);
             _wptr += l;
         }
     }

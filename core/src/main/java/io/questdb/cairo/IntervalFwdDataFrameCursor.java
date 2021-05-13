@@ -25,8 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.vm.ReadOnlyVirtualMemory;
-import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.std.LongList;
 
 public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
     /**
@@ -38,7 +37,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalFwdDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public IntervalFwdDataFrameCursor(LongList intervals, int timestampIndex) {
         super(intervals, timestampIndex);
     }
 
@@ -52,7 +51,7 @@ public class IntervalFwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
 
-                final ReadOnlyVirtualMemory column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final ReadOnlyColumn column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 

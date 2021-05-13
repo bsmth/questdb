@@ -80,11 +80,6 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public CharSequence getSymbolB(Record rec) {
-        return arg.valueBOf(getInt(rec));
-    }
-
-    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
     }
@@ -92,10 +87,5 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     @Override
     public CharSequence valueOf(int key) {
         return arg.valueOf(key);
-    }
-
-    @Override
-    public CharSequence valueBOf(int key) {
-        return arg.valueBOf(key);
     }
 }

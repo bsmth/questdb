@@ -1,12 +1,10 @@
 package io.questdb.cutlass.line.tcp;
 
-import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
 import java.util.Base64;
 
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -26,22 +24,15 @@ public class AuthDbTest {
         byte[] signatureRaw = Base64.getDecoder().decode(signature);
         Signature sig;
 
-        try {
-            if (signatureRaw.length == 64) {
-                sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);
-            } else {
-                sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
-            }
-        } catch (NoSuchAlgorithmException ex) {
-            if (TestUtils.getJavaVersion() <= 8) {
-                return;
-            }
-            throw ex;
+        if (signatureRaw.length == 64) {
+            sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_P1363);
+        } else {
+            sig = Signature.getInstance(AuthDb.SIGNATURE_TYPE_DER);
         }
 
         sig.initSign(secretKey);
         sig.update(challenge.getBytes());
-        byte[] sig2 = sig.sign();
+        byte sig2[] = sig.sign();
         sig.initVerify(publicKey);
         sig.update(challenge.getBytes());
         boolean verified = sig.verify(sig2);

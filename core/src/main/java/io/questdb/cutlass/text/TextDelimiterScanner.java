@@ -28,7 +28,6 @@ import io.questdb.cutlass.http.ex.NotEnoughLinesException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -95,13 +94,6 @@ public class TextDelimiterScanner implements Closeable {
         Unsafe.free(matrix, matrixSize);
     }
 
-    private void bumpCountAt(int line, byte bytePosition, int increment) {
-        if (bytePosition > 0) {
-            final long pos = matrix + ((long) line * matrixRowSize + bytePosition * Integer.BYTES);
-            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
-        }
-    }
-
     byte scan(long address, long hi) throws TextException {
         int lineCount = 0;
         boolean quotes = false;
@@ -115,7 +107,7 @@ public class TextDelimiterScanner implements Closeable {
 
         int lineLen = 0;
 
-        Vect.memset(matrix, matrixSize, 0);
+        Unsafe.getUnsafe().setMemory(matrix, matrixSize, (byte) 0);
         while (cursor < hi && lineCount < lineCountLimit) {
             byte b = Unsafe.getUnsafe().getByte(cursor++);
 
@@ -199,7 +191,7 @@ public class TextDelimiterScanner implements Closeable {
             }
 
             if (set) {
-                long offset = i * 4L;
+                long offset = i * Integer.BYTES;
 
                 // calculate mean
                 long sum = 0;
@@ -208,7 +200,7 @@ public class TextDelimiterScanner implements Closeable {
                     offset += matrixRowSize;
                 }
 
-                offset = i * 4L;
+                offset = i * Integer.BYTES;
                 final double mean = (double) sum / lineCount;
                 if (mean > 0) {
                     double squareSum = 0.0;
@@ -281,6 +273,13 @@ public class TextDelimiterScanner implements Closeable {
                 .put(", lineCountLimit=").put(lineCountLimit)
                 .put(", lineCount=").put(lineCount)
                 .put(']');
+    }
+
+    private void bumpCountAt(int line, byte bytePosition, int increment) {
+        if (bytePosition > 0) {
+            final long pos = matrix + (line * matrixRowSize + bytePosition * Integer.BYTES);
+            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
+        }
     }
 
     void setTableName(CharSequence tableName) {

@@ -24,8 +24,7 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.NetworkIOJob;
-import io.questdb.cutlass.line.tcp.NewLineProtoParser.ParseResult;
+import io.questdb.cutlass.line.tcp.LineTcpMeasurementScheduler.LineTcpMeasurementEvent;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.IOContext;
@@ -33,10 +32,8 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectByteCharSequence;
-import io.questdb.std.str.FloatingDirectCharSink;
 
 class LineTcpConnectionContext implements IOContext, Mutable {
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
@@ -51,11 +48,8 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected long recvBufEnd;
     protected long recvBufPos;
     protected boolean peerDisconnected;
+    private boolean queueFull;
     private long lastQueueFullLogMillis = 0;
-    private final NewLineProtoParser protoParser = new NewLineProtoParser();
-    private boolean goodMeasurement;
-    protected long recvBufStartOfMeasurement;
-    private final FloatingDirectCharSink charSink = new FloatingDirectCharSink();
 
     LineTcpConnectionContext(LineTcpReceiverConfiguration configuration, LineTcpMeasurementScheduler scheduler) {
         nf = configuration.getNetworkFacade();
@@ -63,20 +57,13 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.milliClock = configuration.getMillisecondClock();
         recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize());
         recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
-        clear();
     }
 
     @Override
     public void clear() {
         recvBufPos = recvBufStart;
         peerDisconnected = false;
-        resetParser();
-    }
-
-    private void resetParser() {
-        protoParser.of(recvBufStart);
-        goodMeasurement = true;
-        recvBufStartOfMeasurement = recvBufStart;
+        queueFull = false;
     }
 
     @Override
@@ -84,8 +71,6 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         this.fd = -1;
         Unsafe.free(recvBufStart, recvBufEnd - recvBufStart);
         recvBufStart = recvBufEnd = recvBufPos = 0;
-        protoParser.close();
-        charSink.close();
     }
 
     @Override
@@ -112,23 +97,19 @@ class LineTcpConnectionContext implements IOContext, Mutable {
         return false;
     }
 
-    protected final boolean compactBuffer(long recvBufNewStart) {
+    protected final void compactBuffer(long recvBufNewStart) {
         assert recvBufNewStart <= recvBufPos;
-        if (recvBufNewStart > recvBufStart) {
-            final int len = (int) (recvBufPos - recvBufNewStart);
-            if (len > 0) {
-                Vect.memcpy(recvBufNewStart, recvBufStart, len);
-            }
-            recvBufPos = recvBufStart + len;
-            return true;
+        final int len = (int) (recvBufPos - recvBufNewStart);
+        if (len > 0) {
+            Unsafe.getUnsafe().copyMemory(recvBufNewStart, recvBufStart, len);
         }
-        return false;
+        recvBufPos = recvBufStart + len;
     }
 
-    private void doHandleDisconnectEvent() {
-        if (protoParser.getBufferAddress() == recvBufEnd) {
+    private boolean doHandleDisconnectEvent() {
+        if (recvBufPos == recvBufEnd) {
             LOG.error().$('[').$(fd).$("] buffer overflow [msgBufferSize=").$(recvBufEnd - recvBufStart).$(']').$();
-            return;
+            return true;
         }
 
         if (peerDisconnected) {
@@ -139,70 +120,78 @@ class LineTcpConnectionContext implements IOContext, Mutable {
                 LOG.info().$('[').$(fd).$("] peer disconnected").$();
             }
         }
+        return peerDisconnected;
     }
 
-    IOContextResult handleIO(NetworkIOJob netIoJob) {
-        read();
-        return parseMeasurements(netIoJob);
+    private boolean handleDisconnectEvent() {
+        if (recvBufPos < recvBufEnd && !peerDisconnected) {
+            return false;
+        }
+        return doHandleDisconnectEvent();
     }
 
-    protected final IOContextResult parseMeasurements(NetworkIOJob netIoJob) {
-        while (true) {
+    IOContextResult handleIO() {
+        while (read()) {
             try {
-                ParseResult rc = goodMeasurement ? protoParser.parseMeasurement(recvBufPos) : protoParser.skipMeasurement(recvBufPos);
-                switch (rc) {
-                    case MEASUREMENT_COMPLETE: {
-                        if (goodMeasurement) {
-                            if (scheduler.tryButCouldNotCommit(netIoJob, protoParser, charSink)) {
-                                // Waiting for writer threads to drain queue, request callback as soon as possible
-                                if (checkQueueFullLogHysteresis()) {
-                                    LOG.debug().$('[').$(fd).$("] queue full").$();
-                                }
-                                return IOContextResult.QUEUE_FULL;
+                // Process as much data as possible
+                long recvBufLineStart = recvBufStart;
+                final long lim = recvBufPos;
+                queueFull = false;
+                do {
+                    final LineTcpMeasurementEvent event = scheduler.getNewEvent();
+                    if (event != null) {
+                        boolean success = true;
+                        try {
+                            final long recvBufLineNext = event.parseLine(recvBufLineStart, recvBufPos);
+                            if (recvBufLineNext > -1 && event.isSuccess()) {
+                                recvBufLineStart = recvBufLineNext;
+                            } else if (recvBufLineNext == -1) {
+                                // incomplete line
+                                success = false;
+                                break;
+                            } else {
+                                success = false;
+                                LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(event.getErrorCode()).$(" at ").$(event.getErrorPosition()).$(" in ")
+                                        .$(byteCharSequence.of(recvBufLineStart, Math.min(recvBufLineNext, recvBufPos))).$();
+                                recvBufLineStart = recvBufLineNext;
                             }
-                        } else {
-                            int position = (int) (protoParser.getBufferAddress() - recvBufStartOfMeasurement);
-                            LOG.error().$('[').$(fd).$("] could not parse measurement, code ").$(protoParser.getErrorCode()).$(" at ").$(position)
-                                    .$(" line (may be mangled due to partial parsing) is ")
-                                    .$(byteCharSequence.of(recvBufStartOfMeasurement, protoParser.getBufferAddress())).$();
-                            goodMeasurement = true;
+                        } finally {
+                            scheduler.commitNewEvent(event, success);
                         }
-                        protoParser.startNextMeasurement();
-                        recvBufStartOfMeasurement = protoParser.getBufferAddress();
-                        if (recvBufStartOfMeasurement == recvBufPos) {
-                            recvBufPos = recvBufStart;
-                            protoParser.of(recvBufStart);
+                    } else {
+                        // Waiting for writer threads to drain queue, request callback as soon as possible
+                        if (checkQueueFullLogHysteresis()) {
+                            LOG.info().$('[').$(fd).$("] queue full, consider increasing queue size or number of writer jobs").$();
                         }
-                        continue;
-                    }
-
-                    case ERROR: {
-                        goodMeasurement = false;
-                        continue;
-                    }
-
-                    case BUFFER_UNDERFLOW: {
-                        if (recvBufPos == recvBufEnd) {
-                            if (!compactBuffer(recvBufStartOfMeasurement)) {
-                                doHandleDisconnectEvent();
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            resetParser();
-                        }
-                        if (!read()) {
-                            if (peerDisconnected) {
-                                return IOContextResult.NEEDS_DISCONNECT;
-                            }
-                            return IOContextResult.NEEDS_READ;
-                        }
+                        queueFull = true;
                         break;
                     }
+                } while (recvBufLineStart != lim);
+
+                // Compact input buffer
+                assert recvBufLineStart <= recvBufPos;
+                final int len = (int) (recvBufPos - recvBufLineStart);
+                Unsafe.getUnsafe().copyMemory(recvBufLineStart, recvBufStart, len);
+                recvBufPos = recvBufStart + len;
+
+                if (queueFull) {
+                    return IOContextResult.NEEDS_CPU;
                 }
+
+                if (handleDisconnectEvent()) {
+                    return IOContextResult.NEEDS_DISCONNECT;
+                }
+
             } catch (RuntimeException ex) {
                 LOG.error().$('[').$(fd).$("] could not process line data").$(ex).$();
                 return IOContextResult.NEEDS_DISCONNECT;
             }
         }
+
+        if (handleDisconnectEvent()) {
+            return IOContextResult.NEEDS_DISCONNECT;
+        }
+        return IOContextResult.NEEDS_READ;
     }
 
     LineTcpConnectionContext of(long clientFd, IODispatcher<LineTcpConnectionContext> dispatcher) {
@@ -215,20 +204,20 @@ class LineTcpConnectionContext implements IOContext, Mutable {
     protected final boolean read() {
         int bufferRemaining = (int) (recvBufEnd - recvBufPos);
         final int orig = bufferRemaining;
-        if (bufferRemaining > 0 && !peerDisconnected) {
+        while (bufferRemaining > 0 && !peerDisconnected) {
             int nRead = nf.recv(fd, recvBufPos, bufferRemaining);
             if (nRead > 0) {
                 recvBufPos += nRead;
                 bufferRemaining -= nRead;
             } else {
                 peerDisconnected = nRead < 0;
+                break;
             }
-            return bufferRemaining < orig;
         }
-        return !peerDisconnected;
+        return bufferRemaining < orig || queueFull;
     }
 
     enum IOContextResult {
-        NEEDS_READ, NEEDS_WRITE, QUEUE_FULL, NEEDS_DISCONNECT
+        NEEDS_READ, NEEDS_WRITE, NEEDS_CPU, NEEDS_DISCONNECT
     }
 }

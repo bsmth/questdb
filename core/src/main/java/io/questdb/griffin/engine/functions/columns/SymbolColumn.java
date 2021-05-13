@@ -55,14 +55,8 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getSymbolB(Record rec) {
-        return rec.getSymB(columnIndex);
-    }
-
-    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         this.symbolTable = symbolTableSource.getSymbolTable(columnIndex);
-        assert !symbolTableStatic || symbolTable != null;
     }
 
     @Override
@@ -78,10 +72,5 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     @Override
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
-    }
-
-    @Override
-    public CharSequence valueBOf(int symbolKey) {
-        return symbolTable.valueBOf(symbolKey);
     }
 }

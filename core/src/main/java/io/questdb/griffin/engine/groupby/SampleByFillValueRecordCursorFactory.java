@@ -193,7 +193,7 @@ public class SampleByFillValueRecordCursorFactory implements RecordCursorFactory
             // we know base cursor has value
             assert next;
             return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
+        } catch (CairoException ex) {
             baseCursor.close();
             throw ex;
         }

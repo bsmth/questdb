@@ -220,8 +220,9 @@ public class JsonLexerTest {
     @Test
     public void testParseLargeFile() throws Exception {
         String path = JsonLexerTest.class.getResource("/json/test.json").getPath();
+        Path p = new Path();
 
-        try (Path p = new Path()) {
+        try (p) {
             if (Os.type == Os.WINDOWS && path.startsWith("/")) {
                 p.of(path.substring(1));
             } else {

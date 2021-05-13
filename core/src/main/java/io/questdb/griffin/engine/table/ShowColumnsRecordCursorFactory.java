@@ -41,7 +41,6 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
     private static final int N_INDEX_BLOCK_CAPACITY_COL = 3;
     private static final int N_SYMBOL_CACHED_COL = 4;
     private static final int N_SYMBOL_CAPACITY_COL = 5;
-    private static final int N_DESIGNATED_COL = 6;
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("column", ColumnType.STRING, null));
@@ -50,7 +49,6 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
         metadata.add(new TableColumnMetadata("indexBlockCapacity", ColumnType.INT, null));
         metadata.add(new TableColumnMetadata("symbolCached", ColumnType.BOOLEAN, null));
         metadata.add(new TableColumnMetadata("symbolCapacity", ColumnType.INT, null));
-        metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN, null));
         METADATA = metadata;
     }
 
@@ -163,16 +161,6 @@ public class ShowColumnsRecordCursorFactory implements RecordCursorFactory {
                     } else {
                         return false;
                     }
-                }
-                if (col == N_SYMBOL_CACHED_COL) {
-                    if (reader.getMetadata().getColumnType(columnIndex) == ColumnType.SYMBOL) {
-                        return reader.getSymbolMapReader(columnIndex).isCached();
-                    } else {
-                        return false;
-                    }
-                }
-                if (col == N_DESIGNATED_COL) {
-                    return reader.getMetadata().getTimestampIndex() == columnIndex;
                 }
                 throw new UnsupportedOperationException();
             }

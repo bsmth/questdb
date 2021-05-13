@@ -35,7 +35,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Iterator;
@@ -70,7 +69,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private final Path path = new Path();
     private final MicrosecondClock clock;
     private final CharSequence root;
-    @NotNull
+    @Nullable
     private final MessageBus messageBus;
 
     /**
@@ -79,7 +78,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
      * @param configuration configuration parameters.
      * @param messageBus    message bus instance to allow index tasks to be communicated to available threads.
      */
-    public WriterPool(CairoConfiguration configuration, @NotNull MessageBus messageBus) {
+    public WriterPool(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         super(configuration, configuration.getInactiveWriterTTL());
         this.configuration = configuration;
         this.messageBus = messageBus;
@@ -148,11 +147,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             LOG.error().$("busy [table=`").utf8(tableName).$("`, owner=").$(owner).$(']').$();
             throw EntryUnavailableException.INSTANCE;
         }
-    }
-
-    public boolean exists(CharSequence tableName) {
-        checkClosed();
-        return entries.contains(tableName);
     }
 
     /**
@@ -235,10 +229,10 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     }
 
     public void unlock(CharSequence name) {
-        unlock(name, null, false);
+        unlock(name, null);
     }
 
-    public void unlock(CharSequence name, @Nullable TableWriter writer, boolean newTable) {
+    public void unlock(CharSequence name, @Nullable TableWriter writer) {
         long thread = Thread.currentThread().getId();
 
         Entry e = entries.get(name);
@@ -257,19 +251,9 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 throw CairoException.instance(0).put("Writer ").put(name).put(" is not locked");
             }
 
-            if (newTable) {
-                // Note that the TableUtils.createTable method will create files, but on some OS's these files will not immediately become
-                // visible on all threads,
-                // only in this thread will they definitely be visible. To prevent spurious file system errors (or even allowing the same
-                // table to be created twice),
-                // we cache the writer in the writerPool whose access via the engine is thread safe
-                assert writer == null && e.lockFd != -1;
-                LOG.info().$("created [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(configuration, name, messageBus, false, e, root);
-            }
-
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
+                entries.remove(name);
 
                 if (e.lockFd != -1) {
                     ff.close(e.lockFd);
@@ -278,7 +262,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
-                entries.remove(name);
             } else {
                 e.writer = writer;
                 writer.setLifecycleManager(e);
@@ -287,7 +270,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                 Unsafe.getUnsafe().putOrderedLong(e, ENTRY_OWNER, UNALLOCATED);
             }
             notifyListener(thread, name, PoolListener.EV_UNLOCKED);
-            LOG.debug().$("unlocked [table=`").utf8(name).$("`]").$();
+            LOG.info().$("unlocked [table=`").utf8(name).$("`]").$();
         } else {
             notifyListener(thread, name, PoolListener.EV_NOT_LOCK_OWNER);
             throw CairoException.instance(0).put("Not lock owner of ").put(name);
@@ -359,7 +342,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
     private void closeWriter(long thread, Entry e, short ev, int reason) {
         TableWriter w = e.writer;
         if (w != null) {
-            CharSequence name = e.writer.getTableName();
+            CharSequence name = e.writer.getName();
             w.setLifecycleManager(DefaultLifecycleManager.INSTANCE);
             w.close();
             e.writer = null;
@@ -374,7 +357,7 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             if (e.owner == UNALLOCATED) {
                 count++;
             } else {
-                LOG.info().$("'").utf8(e.writer.getTableName()).$("' is still busy [owner=").$(e.owner).$(']').$();
+                LOG.info().$("'").utf8(e.writer.getName()).$("' is still busy [owner=").$(e.owner).$(']').$();
             }
         }
 
@@ -395,7 +378,6 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
                     .$(", errno=").$(ex.getErrno())
                     .$(']').$();
             e.ex = ex;
-            e.owner = -1;
             notifyListener(e.owner, name, PoolListener.EV_CREATE_EX);
             throw ex;
         }
@@ -409,34 +391,26 @@ public class WriterPool extends AbstractPool implements ResourcePool<TableWriter
             e.owner = UNALLOCATED;
             return false;
         }
-        LOG.debug().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
+        LOG.info().$("locked [table=`").utf8(tableName).$("`, thread=").$(thread).$(']').$();
         notifyListener(thread, tableName, PoolListener.EV_LOCK_SUCCESS);
         return true;
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getTableName()).$("`, thread=").$(e.owner).$(']').$();
-        notifyListener(e.owner, e.writer.getTableName(), event);
+        LOG.info().$(">> [table=`").utf8(e.writer.getName()).$("`, thread=").$(e.owner).$(']').$();
+        notifyListener(e.owner, e.writer.getName(), event);
         return e.writer;
     }
 
     private boolean returnToPool(Entry e) {
-        final long thread = Thread.currentThread().getId();
-        final CharSequence name = e.writer.getTableName();
-        try {
-            e.writer.rollback();
-        } catch (CairoException | CairoError ex) {
-            // We are here because of a systemic issues of some kind
-            // one of the known issues is "disk is full" so we could not rollback properly.
-            // In this case we just close TableWriter
-            entries.remove(name);
-            closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
-            return true;
-        }
+        e.writer.rollback();
+        CharSequence name = e.writer.getName();
+        long thread = Thread.currentThread().getId();
         if (e.owner != UNALLOCATED) {
             LOG.info().$("<< [table=`").utf8(name).$("`, thread=").$(thread).$(']').$();
             if (isClosed()) {
                 LOG.info().$("allowing '").utf8(name).$("' to close [thread=").$(e.owner).$(']').$();
+                entries.remove(name);
                 notifyListener(thread, name, PoolListener.EV_OUT_OF_POOL_CLOSE);
                 return false;
             }

@@ -1,68 +1,71 @@
-/*******************************************************************************
- *     ___                  _   ____  ____
- *    / _ \ _   _  ___  ___| |_|  _ \| __ )
- *   | | | | | | |/ _ \/ __| __| | | |  _ \
- *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
- *    \__\_\\__,_|\___||___/\__|____/|____/
- *
- *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2020 QuestDB
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- ******************************************************************************/
-
 package io.questdb.cairo;
+
+import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
+
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import io.questdb.cairo.TableBlockWriter.TableBlockWriterJob;
 import io.questdb.cairo.security.AllowAllCairoSecurityContext;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.AbstractGriffinTest;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TestUtils.LeakProneCode;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.LockSupport;
 
 public class TableBlockWriterTest extends AbstractGriffinTest {
     private static final Log LOG = LogFactory.getLog(TableBlockWriterTest.class);
     private static final int ONE_MEG_IN_PAGES = 1024 * 1024 / (int) Files.PAGE_SIZE;
     private static final AtomicInteger N_MAPPED_PAGES = new AtomicInteger(ONE_MEG_IN_PAGES);
-    private static FilesFacade ff;
+    private static Function<LPSZ, Long> FF_openRW_INTERCEPTOR;
 
     @BeforeClass
-    public static void setUpStatic() {
-        AbstractGriffinTest.setUpStatic();
-        sqlExecutionContext.getRandom().reset(0, 1);
-        ff = new FilesFacadeImpl() {
+    public static void setUp() throws IOException {
+        AbstractCairoTest.setUp();
+        final FilesFacade ff = new FilesFacadeImpl() {
             @Override
             public long getMapPageSize() {
                 return N_MAPPED_PAGES.get() * getPageSize();
             }
+
+            @Override
+            public long openRW(LPSZ name) {
+                Long fd = FF_openRW_INTERCEPTOR.apply(name);
+                if (null != fd) {
+                    return fd;
+                }
+                return Files.openRW(name);
+            }
         };
+        FF_openRW_INTERCEPTOR = (name) -> null;
+        
+        configuration = new DefaultCairoConfiguration(root) {
+            @Override
+            public FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+    }
+
+    @BeforeClass
+    public static void setUp2() {
+        AbstractGriffinTest.setUp2();
+        sqlExecutionContext.getRandom().reset(0, 1);
     }
 
     @Test
@@ -74,8 +77,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             compiler.compile("ALTER TABLE source ADD COLUMN str STRING",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -96,8 +100,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(5)" +
                             ";",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -118,8 +123,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(250)" +
                             ";",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG, str STRING) TIMESTAMP(ts) PARTITION BY DAY", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -149,10 +155,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(1000)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected,
                     "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts)",
                     2);
+            engine.releaseInactive();
         });
     }
 
@@ -182,10 +189,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(1000)" +
                             ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected,
                     "(ch CHAR, ll LONG256, a1 INT, a INT, b BOOLEAN, c STRING, d DOUBLE, e FLOAT, f SHORT, f1 SHORT, g DATE, h TIMESTAMP, i SYMBOL, j LONG, j1 LONG, ts TIMESTAMP, l BYTE, m BINARY) TIMESTAMP(ts) PARTITION BY DAY",
                     2);
+            engine.releaseInactive();
         });
     }
 
@@ -193,22 +201,22 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testAllTypesResumeBlock() throws Exception {
         int nTest = 0;
         boolean[] bools = {true, false};
-        long[] maxRowsPerFrameList = {Long.MAX_VALUE, 3};
-        int[] nMappedPagesList = {ONE_MEG_IN_PAGES, 2};
+        long[] maxRowsPerFrameList = { Long.MAX_VALUE, 3 };
+        int[] nMappedPagesList = { ONE_MEG_IN_PAGES, 2 };
         for (int nThreads = 0; nThreads <= 1; nThreads++) {
             for (int nMappedPages : nMappedPagesList) {
-                FilesFacadeImpl ff = new FilesFacadeImpl() {
-                    @Override
-                    public long getMapPageSize() {
-                        return nMappedPages * getPageSize();
-                    }
-                };
+                N_MAPPED_PAGES.set(nMappedPages);
                 for (boolean retry : bools) {
                     for (boolean cancel : bools) {
                         for (boolean partitioned : bools) {
-                            for (long maxRowsPerFrame : maxRowsPerFrameList) {
-                                testAllTypesResumeBlock(ff, nTest++, maxRowsPerFrame, true, nThreads, partitioned, retry, cancel);
-                            }
+                            // for (boolean commitAllAtOnce : bools) {
+                                for (long maxRowsPerFrame : maxRowsPerFrameList) {
+                                    if (!retry && cancel) {
+                                        continue;
+                                    }
+                                    testAllTypesResumeBlock(nTest++, maxRowsPerFrame, true, nThreads, partitioned, retry, cancel);
+                                }
+                                // }
                         }
                     }
                 }
@@ -216,21 +224,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
     }
 
-    public void testAllTypesResumeBlock(
-            FilesFacade ff,
-            int nTest,
-            long maxRowsPerFrame,
-            boolean commitAllAtOnce,
-            int nThreads,
-            boolean partitioned,
-            boolean retry,
-            boolean cancel
-    ) throws Exception {
+    public void testAllTypesResumeBlock(int nTest, long maxRowsPerFrame, boolean commitAllAtOnce, int nThreads, boolean partitioned, boolean retry, boolean cancel) throws Exception {
         if (!retry && cancel) {
             // This scenario does not make sense;
             return;
         }
-        runTest(ff, "testAllTypesResumeBlock(" + maxRowsPerFrame + ")", () -> {
+        runTest("testAllTypesResumeBlock(" + maxRowsPerFrame + ")", () -> {
             String sourceTableName = "source" + nTest;
             String destTableName = "dest" + nTest;
             String partitionSrt = partitioned ? " PARTITION BY DAY" : "";
@@ -260,7 +259,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(" + nConsecutiveRows + ")" +
                             ") TIMESTAMP (ts)" + partitionSrt + ";",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM " + sourceTableName);
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
                     "CREATE TABLE " + destTableName
@@ -269,7 +268,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             replicateTable(sourceTableName, destTableName, 0, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
 
-            CharSequence actual = select("SELECT * FROM " + destTableName);
+            String actual = select("SELECT * FROM " + destTableName);
             Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
@@ -309,6 +308,8 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
 
             compiler.compile("DROP TABLE " + sourceTableName, sqlExecutionContext);
             compiler.compile("DROP TABLE " + destTableName, sqlExecutionContext);
+
+            engine.releaseInactive();
         });
     }
 
@@ -330,8 +331,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 25000000000) ts, rnd_long(-55, 9009, 2) l, rnd_bin(10000, 20000, 1) bin FROM long_sequence(200)" +
                             ") TIMESTAMP (ts) PARTITION BY MONTH;",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG, bin BINARY) TIMESTAMP(ts) PARTITION BY MONTH", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -341,9 +343,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             int nTest = 0;
             boolean[] bools = {true, false};
             for (boolean commitAllAtOnce : bools) {
-                testMixedWrites(nTest++, 0, commitAllAtOnce, 20);
-                testMixedWrites(nTest++, 2, commitAllAtOnce, 10);
+                testMixedWrites(nTest++, 0, 1, commitAllAtOnce, 20);
+                testMixedWrites(nTest++, 2, 1, commitAllAtOnce, 10);
             }
+            engine.releaseInactive();
         });
     }
 
@@ -354,42 +357,10 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                             ");",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(l LONG)", 1);
+            engine.releaseInactive();
         });
-    }
-
-    @Test
-    public void testOpenFailure() throws Exception {
-        String failedFn = "dest" + Files.SEPARATOR + "1970-03" + Files.SEPARATOR + "l.d";
-        runTest(
-                new FilesFacadeImpl() {
-                    @Override
-                    public long openRW(LPSZ name) {
-                        if (Chars.endsWith(name, failedFn)) {
-                            return -1L;
-                        }
-                        return super.openRW(name);
-                    }
-                },
-                "testPartitioned", () -> {
-                    compiler.compile("CREATE TABLE source AS (" +
-                                    "SELECT timestamp_sequence(5000000000000, 5000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                                    ") TIMESTAMP (ts) PARTITION BY MONTH;",
-                            sqlExecutionContext);
-                    compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY MONTH",
-                            sqlExecutionContext);
-                    CharSequence expected = select("SELECT * FROM source WHERE ts < '1970-03-01T00:00:00.000000Z'");
-                    try {
-                        replicateTable("source", "dest", 0, true, Long.MAX_VALUE, false, false, 0);
-                        Assert.fail();
-                    } catch (CairoException ex) {
-                        Assert.assertTrue(ex.getFlyweightMessage().toString().contains("could not open"));
-                    }
-                    CharSequence actual = select("SELECT * FROM dest");
-                    TestUtils.assertEquals(expected, actual);
-                }
-        );
     }
 
     @Test
@@ -399,8 +370,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                             ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -408,11 +380,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testPartitioned2() throws Exception {
         runTest("testPartitioned", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                            ") TIMESTAMP (ts) PARTITION BY DAY;",
+                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts) PARTITION BY DAY;",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY DAY", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -423,8 +396,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -432,11 +406,12 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     public void testSimple2() throws Exception {
         runTest("testSimple", () -> {
             compiler.compile("CREATE TABLE source AS (" +
-                            "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
-                            ") TIMESTAMP (ts);",
+                    "SELECT timestamp_sequence(500000000000000, 1000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, l LONG) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 
@@ -487,8 +462,38 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             "SELECT timestamp_sequence(0, 1000000000) ts, rnd_symbol(60,2,16,2) sym FROM long_sequence(500)" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
+        });
+    }
+
+    @Test
+    public void testOpenFailure() throws Exception {
+        String failedFn = "dest" + Files.SEPARATOR + "1970-03" + Files.SEPARATOR + "l.d";
+        FF_openRW_INTERCEPTOR = (fn) -> {
+            if (fn.toString().endsWith(failedFn)) {
+                return -1L;
+            }
+            return null;
+        };
+        runTest("testPartitioned", () -> {
+            compiler.compile("CREATE TABLE source AS (" +
+                    "SELECT timestamp_sequence(5000000000000, 5000000000) ts, rnd_long(-55, 9009, 2) l FROM long_sequence(500)" +
+                    ") TIMESTAMP (ts) PARTITION BY MONTH;",
+                    sqlExecutionContext);
+            compiler.compile("CREATE TABLE dest (ts TIMESTAMP, l LONG) TIMESTAMP(ts) PARTITION BY MONTH",
+                    sqlExecutionContext);
+            String expected = select("SELECT * FROM source WHERE ts < '1970-03-01T00:00:00.000000Z'");
+            try {
+                replicateTable("source", "dest", 0, true, Long.MAX_VALUE, false, false, 0);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.getFlyweightMessage().toString().contains("Could not open"));
+            }
+            String actual = select("SELECT * FROM dest");
+            Assert.assertEquals(expected, actual);
+            engine.releaseInactive();
         });
     }
 
@@ -497,14 +502,7 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
     }
 
     private void replicateTable(
-            String sourceTableName,
-            String destTableName,
-            long nFirstRow,
-            boolean commit,
-            long maxRowsPerFrame,
-            boolean cancel,
-            boolean commitAllAtOnce,
-            int nThreads
+            String sourceTableName, String destTableName, long nFirstRow, boolean commit, long maxRowsPerFrame, boolean cancel, boolean commitAllAtOnce, int nThreads
     ) {
         LOG.info().$("Replicating [sourceTableName=").$(sourceTableName).$(", destTableName=").$(destTableName).$(", nFirstRow=").$(nFirstRow).$(", commit=").$(commit)
                 .$(", maxRowsPerFrame=").$(maxRowsPerFrame).$(", cancel=").$(cancel).$(", commitAllAtOnce=").$(commitAllAtOnce).$(", nThreads=").$(nThreads).$(']').$();
@@ -634,9 +632,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
         }
     }
 
-    private void runReplicationTests(CharSequence expected, String tableCreateFields, int nMaxThreads) throws SqlException {
+    private void runReplicationTests(String expected, String tableCreateFields, int nMaxThreads) throws SqlException {
         int nTest = 1;
-        int[] nMappedPagesList = {ONE_MEG_IN_PAGES, 1};
+        int[] nMappedPagesList = { ONE_MEG_IN_PAGES, 1 };
         for (int nThreads = 0; nThreads <= nMaxThreads; nThreads++) {
             for (int nMappedPages : nMappedPagesList) {
                 N_MAPPED_PAGES.set(nMappedPages);
@@ -644,39 +642,36 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 String destTableName = "dest" + nTest;
                 compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
                 replicateTable("source", destTableName, 0, true, Long.MAX_VALUE, false, false, nThreads);
-                CharSequence actual = select("SELECT * FROM " + destTableName);
-                TestUtils.assertEquals(expected, actual);
+                String actual = select("SELECT * FROM " + destTableName);
+                Assert.assertEquals(expected, actual);
                 nTest++;
 
                 destTableName = "dest" + nTest;
                 compiler.compile("CREATE TABLE " + destTableName + " " + tableCreateFields + ";", sqlExecutionContext);
                 replicateTable("source", destTableName, 0, true, Long.MAX_VALUE, false, true, nThreads);
                 actual = select("SELECT * FROM " + destTableName);
-                TestUtils.assertEquals(expected, actual);
+                Assert.assertEquals(expected, actual);
                 nTest++;
-                compiler.compile("drop table " + destTableName, sqlExecutionContext);
             }
         }
     }
 
     private void runTest(String name, LeakProneCode runnable) throws Exception {
-        runTest(ff, name, runnable);
-    }
-
-    private void runTest(FilesFacade ff, String name, LeakProneCode runnable) throws Exception {
         LOG.info().$("Starting test ").$(name).$();
-        assertMemoryLeak(ff, runnable);
+        TestUtils.assertMemoryLeak(runnable);
         LOG.info().$("Finished test ").$(name).$();
     }
 
-    private CharSequence select(CharSequence selectSql) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                sqlExecutionContext,
-                selectSql,
-                sink
-        );
-        return sink;
+    private String select(CharSequence selectSql) throws SqlException {
+        sink.clear();
+        CompiledQuery query = compiler.compile(selectSql, sqlExecutionContext);
+        try (
+                RecordCursorFactory factory = query.getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            printer.print(cursor, factory.getMetadata(), true);
+        }
+        return sink.toString();
     }
 
     private void testBinary(boolean endsWithNull) throws Exception {
@@ -696,14 +691,16 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                                 ")",
                         sqlExecutionContext);
             }
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, bin BINARY) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 
-    private void testMixedWrites(int nTest, int nThreads, boolean commitAllAtOnce, int nBatches) throws Exception {
-        CharSequence expected;
-        CharSequence actual;
+    private void testMixedWrites(int nTest, int nThreads, int nMappedPages, boolean commitAllAtOnce, int nBatches) throws Exception {
+        N_MAPPED_PAGES.set(nMappedPages);
+        String expected;
+        String actual;
         String sourceTableName = "source" + nTest;
         String destTableName = "dest" + nTest;
         compiler.compile("CREATE TABLE " + sourceTableName
@@ -749,11 +746,11 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                 replicateTable(sourceTableName, destTableName, nRowsWritten, true, 133, false, commitAllAtOnce, nThreads);
             }
             actual = select("SELECT * FROM " + destTableName);
-            TestUtils.assertEquals(expected, actual);
+            Assert.assertEquals(expected, actual);
             nRowsWritten += nBatchRows;
             tsStart += nBatchRows * tsIncrement;
         }
-
+        
         compiler.compile("DROP TABLE " + sourceTableName, sqlExecutionContext);
         compiler.compile("DROP TABLE " + destTableName, sqlExecutionContext);
     }
@@ -771,14 +768,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(" + nConsecutiveRows + ")" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM " + sourceTableName);
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
                     "CREATE TABLE " + destTableName + " (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
                     sqlExecutionContext);
             replicateTable(sourceTableName, destTableName, 0, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
-            CharSequence actual = select("SELECT * FROM " + destTableName);
-            TestUtils.assertEquals(expected, actual);
+            String actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
             compiler.compile("INSERT INTO " + sourceTableName + "(j, ts) " +
@@ -791,7 +788,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
             expected = select("SELECT * FROM " + sourceTableName);
             replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, maxRowsPerFrame, false, commitAllAtOnce, nThreads);
             actual = select("SELECT * FROM " + destTableName);
-            TestUtils.assertEquals(expected, actual);
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
         });
     }
 
@@ -809,14 +808,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                             " from long_sequence(" + nConsecutiveRows + ")" +
                             ") TIMESTAMP (ts);",
                     sqlExecutionContext);
-            CharSequence expected = select("SELECT * FROM " + sourceTableName);
+            String expected = select("SELECT * FROM " + sourceTableName);
 
             compiler.compile(
                     "CREATE TABLE " + destTableName + " (j LONG, ts TIMESTAMP) TIMESTAMP(ts);",
                     sqlExecutionContext);
             replicateTable(sourceTableName, destTableName, 0, true, Long.MAX_VALUE, false, commitAllAtOnce, nThreads);
-            CharSequence actual = select("SELECT * FROM " + destTableName);
-            TestUtils.assertEquals(expected, actual);
+            String actual = select("SELECT * FROM " + destTableName);
+            Assert.assertEquals(expected, actual);
 
             tsStart += nConsecutiveRows * tsInc;
             compiler.compile("INSERT INTO " + sourceTableName + "(j, ts) " +
@@ -828,12 +827,14 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                     sqlExecutionContext);
             replicateTable(sourceTableName, destTableName, nConsecutiveRows, false, Long.MAX_VALUE, cancel, commitAllAtOnce, nThreads);
             actual = select("SELECT * FROM " + destTableName);
-            TestUtils.assertEquals(expected, actual);
+            Assert.assertEquals(expected, actual);
 
             replicateTable(sourceTableName, destTableName, nConsecutiveRows, true, Long.MAX_VALUE, false, commitAllAtOnce, nThreads);
             actual = select("SELECT * FROM " + destTableName);
             expected = select("SELECT * FROM " + sourceTableName);
-            TestUtils.assertEquals(expected, actual);
+            Assert.assertEquals(expected, actual);
+
+            engine.releaseInactive();
         });
     }
 
@@ -854,8 +855,9 @@ public class TableBlockWriterTest extends AbstractGriffinTest {
                                 ")",
                         sqlExecutionContext);
             }
-            CharSequence expected = select("SELECT * FROM source");
+            String expected = select("SELECT * FROM source");
             runReplicationTests(expected, "(ts TIMESTAMP, s STRING) TIMESTAMP(ts)", 2);
+            engine.releaseInactive();
         });
     }
 }

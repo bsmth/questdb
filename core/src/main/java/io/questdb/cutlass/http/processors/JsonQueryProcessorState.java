@@ -254,7 +254,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 putQuoted("error").put(':').encodeUtf8AndQuote(message).put(',').
                 putQuoted("position").put(':').put(position);
         socket.put('}');
-        socket.sendChunk(true);
+        socket.sendChunk();
+        socket.done();
     }
 
     private static void putStringOrNull(CharSink r, CharSequence str) {
@@ -355,7 +356,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').putQuoted("empty column in list");
             socket.put('}');
-            socket.sendChunk(true);
+            socket.sendChunk();
+            socket.done();
             return true;
         }
 
@@ -368,7 +370,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putQuoted("query").put(':').encodeUtf8AndQuote(query).put(',').
                     putQuoted("error").put(':').put('\'').put("invalid column in list: ").put(columnNames, start, hi).put('\'');
             socket.put('}');
-            socket.sendChunk(true);
+            socket.sendChunk();
+            socket.done();
             return true;
         }
 
@@ -494,8 +497,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
             socket.put('}');
             count = -1;
-            socket.sendChunk(true);
-            return;
+            socket.sendChunk();
         }
         socket.done();
     }
@@ -540,7 +542,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 socket.put('{').
                         putQuoted("error").put(':').putQuoted("utf8 error in column list");
                 socket.put('}');
-                socket.sendChunk(true);
+                socket.sendChunk();
+                socket.done();
                 return false;
             }
 

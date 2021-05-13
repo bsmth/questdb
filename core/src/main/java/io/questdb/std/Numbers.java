@@ -25,22 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.std.str.CharSink;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
-
 
 import java.util.Arrays;
 
 public final class Numbers {
-    //#if jdk.version!=8
-    static {
-        Module currentModule = Numbers.class.getModule();
-        Unsafe.addExports(Unsafe.JAVA_BASE_MODULE, currentModule, "jdk.internal.math");
-    }
-    //#endif
 
     public static final int INT_NaN = Integer.MIN_VALUE;
     public static final long LONG_NaN = Long.MIN_VALUE;
@@ -525,10 +514,6 @@ public final class Numbers {
         return Integer.compare(anotherBits, thisBits);                          // (0.0, -0.0) or (NaN, !NaN)
     }
 
-    public static short decodeHighShort(int val) {
-        return (short) (val >> 16);
-    }
-
     public static int decodeHighInt(long val) {
         return (int) (val >> 32);
     }
@@ -537,16 +522,8 @@ public final class Numbers {
         return (int) (val & 0xffffffffL);
     }
 
-    public static short decodeLowShort(int val) {
-        return (short) (val & 0xffff);
-    }
-
     public static long encodeLowHighInts(int low, int high) {
         return ((Integer.toUnsignedLong(high)) << 32L) | Integer.toUnsignedLong(low);
-    }
-
-    public static int encodeLowHighShorts(short low, short high) {
-        return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
     public static int hexToDecimal(int c) throws NumericException {

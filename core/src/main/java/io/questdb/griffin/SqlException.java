@@ -57,7 +57,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     }
 
     public static SqlException position(int position) {
-        SqlException ex = new SqlException();
+        SqlException ex = tlException.get();
         ex.message.clear();
         ex.position = position;
         return ex;
@@ -83,7 +83,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     @Override
     public String getMessage() {
-        return "[" + position + "] " + message;
+        return "[" + position + "] " + message.toString();
     }
 
     public int getPosition() {
